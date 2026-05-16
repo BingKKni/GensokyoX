@@ -10,6 +10,7 @@ import (
 
 	"github.com/hoshinonyaruko/gensokyo/config"
 	"github.com/hoshinonyaruko/gensokyo/handlers"
+	"github.com/hoshinonyaruko/gensokyo/recentmsg"
 	"github.com/hoshinonyaruko/gensokyo/structs"
 
 	"github.com/gin-gonic/gin"
@@ -63,6 +64,10 @@ func CombinedMiddleware(api openapi.OpenAPI, apiV2 openapi.OpenAPI) gin.HandlerF
 			handleDeleteMsg(c, api, apiV2)
 			return
 		}
+		if c.Request.URL.Path == "/get_group_recent_messages" {
+			handleGetGroupRecentMessages(c)
+			return
+		}
 		if c.Request.URL.Path == "/get_avatar" {
 			handleGetAvatar(c, api, apiV2)
 			return
@@ -85,14 +90,49 @@ func CombinedMiddleware(api openapi.OpenAPI, apiV2 openapi.OpenAPI) gin.HandlerF
 	}
 }
 
+func handleGetGroupRecentMessages(c *gin.Context) {
+	groupID := c.Query("group_id")
+	if groupID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "group_id is required"})
+		return
+	}
+
+	limit := 10
+	if rawLimit := c.Query("limit"); rawLimit != "" {
+		parsedLimit, err := strconv.Atoi(rawLimit)
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"group_id": groupID,
+				"limit":    rawLimit,
+				"messages": []recentmsg.GroupMessage{},
+			})
+			return
+		}
+		limit = parsedLimit
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"group_id": groupID,
+		"limit":    limit,
+		"messages": recentmsg.GetGroupMessages(groupID, limit),
+	})
+}
+
 // handleSendGroupMessage 处理发送群聊消息的请求
+//
+// message_id 说明（可选参数）：
+//   - 不传或为空：保持原有行为，自动根据 echo / lazy_message_id / idmap 选择 msg_id；
+//   - 传 "0"：强制以主动消息方式发送（不附带 msg_id，若存在可用的 event_id 仍会附带，
+//     与内部 lazy_message_id == "2000" 的行为保持一致）。
 func handleSendGroupMessage(c *gin.Context, api openapi.OpenAPI, apiV2 openapi.OpenAPI) {
 	var retmsg string
 	var req struct {
-		GroupID    int64  `json:"group_id" form:"group_id"`
-		UserID     *int64 `json:"user_id,omitempty" form:"user_id"`
-		Message    string `json:"message" form:"message"`
-		AutoEscape bool   `json:"auto_escape" form:"auto_escape"`
+		GroupID        int64  `json:"group_id" form:"group_id"`
+		UserID         *int64 `json:"user_id,omitempty" form:"user_id"`
+		Message        string `json:"message" form:"message"`
+		AutoEscape     bool   `json:"auto_escape" form:"auto_escape"`
+		MessageID      string `json:"message_id,omitempty" form:"message_id"`
+		ReplyMessageID string `json:"reply_message_id,omitempty" form:"reply_message_id"`
 	}
 
 	// 根据请求方法解析参数
@@ -123,6 +163,14 @@ func handleSendGroupMessage(c *gin.Context, api openapi.OpenAPI, apiV2 openapi.O
 	// 如果 UserID 存在，则加入到参数中
 	if req.UserID != nil {
 		message.Params.UserID = strconv.FormatInt(*req.UserID, 10)
+	}
+	// 显式指定 message_id 时透传，下游会识别 "0" 走强制主动消息逻辑
+	if req.MessageID != "" {
+		message.Params.MessageID = req.MessageID
+	}
+	// 引用回复：透传 reply_message_id
+	if req.ReplyMessageID != "" {
+		message.Params.ReplyMessageID = req.ReplyMessageID
 	}
 	// 调用处理函数
 	retmsg, err := handlers.HandleSendGroupMsg(client, api, apiV2, message)
@@ -190,14 +238,21 @@ func handleSendGroupMessageRaw(c *gin.Context, api openapi.OpenAPI, apiV2 openap
 }
 
 // handleSendPrivateMessage 处理发送私聊消息的请求
+//
+// message_id 说明（可选参数）：
+//   - 不传或为空：保持原有行为，自动根据 echo / lazy_message_id / idmap 选择 msg_id；
+//   - 传 "0"：强制以主动消息方式发送（不附带 msg_id，若存在可用的 event_id 仍会附带，
+//     与内部 lazy_message_id == "2000" 的行为保持一致）。
 func handleSendPrivateMessage(c *gin.Context, api openapi.OpenAPI, apiV2 openapi.OpenAPI) {
 	var retmsg string
 	var req struct {
-		GroupID    int64  `json:"group_id" form:"group_id"`
-		UserID     int64  `json:"user_id" form:"user_id"`
-		Message    string `json:"message" form:"message"`
-		AutoEscape bool   `json:"auto_escape" form:"auto_escape"`
-		IsWakeup   bool   `json:"is_wakeup" form:"is_wakeup"`
+		GroupID        int64  `json:"group_id" form:"group_id"`
+		UserID         int64  `json:"user_id" form:"user_id"`
+		Message        string `json:"message" form:"message"`
+		AutoEscape     bool   `json:"auto_escape" form:"auto_escape"`
+		IsWakeup       bool   `json:"is_wakeup" form:"is_wakeup"`
+		MessageID      string `json:"message_id,omitempty" form:"message_id"`
+		ReplyMessageID string `json:"reply_message_id,omitempty" form:"reply_message_id"`
 	}
 
 	// 根据请求方法解析参数
@@ -228,6 +283,14 @@ func handleSendPrivateMessage(c *gin.Context, api openapi.OpenAPI, apiV2 openapi
 			Message:  req.Message,
 			IsWakeup: req.IsWakeup,
 		},
+	}
+	// 显式指定 message_id 时透传，下游会识别 "0" 走强制主动消息逻辑
+	if req.MessageID != "" {
+		message.Params.MessageID = req.MessageID
+	}
+	// 引用回复：透传 reply_message_id
+	if req.ReplyMessageID != "" {
+		message.Params.ReplyMessageID = req.ReplyMessageID
 	}
 	// 调用处理函数
 	retmsg, err := handlers.HandleSendPrivateMsg(client, api, apiV2, message)
@@ -501,11 +564,12 @@ func handleDeleteMsg(c *gin.Context, api openapi.OpenAPI, apiV2 openapi.OpenAPI)
 	// 根据请求方法解析参数 GET
 	if c.Request.Method == http.MethodGet {
 		var req struct {
-			UserID    string `json:"user_id,omitempty" form:"user_id"`
-			GroupID   string `json:"group_id,omitempty" form:"group_id"`
-			ChannelID string `json:"channel_id,omitempty" form:"channel_id"`
-			GuildID   string `json:"guild_id,omitempty" form:"guild_id"`
-			MessageID string `json:"message_id" form:"message_id"`
+			UserID        string `json:"user_id,omitempty" form:"user_id"`
+			GroupID       string `json:"group_id,omitempty" form:"group_id"`
+			ChannelID     string `json:"channel_id,omitempty" form:"channel_id"`
+			GuildID       string `json:"guild_id,omitempty" form:"guild_id"`
+			MessageID     string `json:"message_id" form:"message_id"`
+			RealMessageID string `json:"real_message_id" form:"real_message_id"`
 		}
 		// 从URL查询参数解析
 		if err := c.ShouldBindQuery(&req); err != nil {
@@ -530,6 +594,9 @@ func handleDeleteMsg(c *gin.Context, api openapi.OpenAPI, apiV2 openapi.OpenAPI)
 		if req.MessageID != "" {
 			params.MessageID = req.MessageID
 		}
+		if req.RealMessageID != "" {
+			params.RealMessageID = req.RealMessageID
+		}
 
 		// 创建 ActionMessage 实例
 		message := callapi.ActionMessage{
@@ -546,16 +613,18 @@ func handleDeleteMsg(c *gin.Context, api openapi.OpenAPI, apiV2 openapi.OpenAPI)
 		}
 
 		// 返回处理结果
-		c.JSON(http.StatusOK, gin.H{"message": retmsg})
+		c.Header("Content-Type", "application/json")
+		c.String(http.StatusOK, retmsg)
 	} else {
 		// 根据请求方法解析参数 POST
 		// 使用interface{}以适应不同类型的输入，接受动态参数类型
 		var req struct {
-			UserID    interface{} `json:"user_id,omitempty" form:"user_id"`
-			GroupID   interface{} `json:"group_id,omitempty" form:"group_id"`
-			ChannelID interface{} `json:"channel_id,omitempty" form:"channel_id"`
-			GuildID   interface{} `json:"guild_id,omitempty" form:"guild_id"`
-			MessageID interface{} `json:"message_id" form:"message_id"`
+			UserID        interface{} `json:"user_id,omitempty" form:"user_id"`
+			GroupID       interface{} `json:"group_id,omitempty" form:"group_id"`
+			ChannelID     interface{} `json:"channel_id,omitempty" form:"channel_id"`
+			GuildID       interface{} `json:"guild_id,omitempty" form:"guild_id"`
+			MessageID     interface{} `json:"message_id" form:"message_id"`
+			RealMessageID interface{} `json:"real_message_id" form:"real_message_id"`
 		}
 		// 从JSON或表单数据解析
 		if err := c.ShouldBind(&req); err != nil {
@@ -580,6 +649,9 @@ func handleDeleteMsg(c *gin.Context, api openapi.OpenAPI, apiV2 openapi.OpenAPI)
 		if req.MessageID != nil {
 			params.MessageID = convertToString(req.MessageID)
 		}
+		if req.RealMessageID != nil {
+			params.RealMessageID = convertToString(req.RealMessageID)
+		}
 
 		// 创建 ActionMessage 实例
 		message := callapi.ActionMessage{
@@ -596,7 +668,8 @@ func handleDeleteMsg(c *gin.Context, api openapi.OpenAPI, apiV2 openapi.OpenAPI)
 		}
 
 		// 返回处理结果
-		c.JSON(http.StatusOK, gin.H{"message": retmsg})
+		c.Header("Content-Type", "application/json")
+		c.String(http.StatusOK, retmsg)
 	}
 
 }

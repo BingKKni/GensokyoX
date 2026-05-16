@@ -10,7 +10,7 @@ set -uo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 cd "$SCRIPT_DIR"
 
-BIN="./gensokyo10" #这里后面编号代表第X次编译，每次编译后都要重命名给后面加一个数字编号，方便启动失败时回退到上一个编号的版本
+BIN="./gensokyo14" #这里后面编号代表第X次编译，每次编译后都要重命名给后面加一个数字编号，方便启动失败时回退到上一个编号的版本
 
 if [[ ! -f "$BIN" ]]; then
   echo "Error: $BIN not found. Put this script next to gensokyox." >&2

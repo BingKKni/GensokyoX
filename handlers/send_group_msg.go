@@ -298,7 +298,23 @@ func HandleSendGroupMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openap
 			eventID = message.Params.EventID.(string)
 		}
 
+		// 调用方显式指定 message_id == "0" 时，强制以主动消息方式发送（不附带 msg_id）
+		// 若已有可用 event_id 仍会附带，行为与 lazy_message_id == "2000" 一致
+		if mid, ok := message.Params.MessageID.(string); ok && mid == "0" {
+			messageID = ""
+			if eventID == "" {
+				eventID = GetEventIDByUseridOrGroupid(config.GetAppIDStr(), message.Params.GroupID)
+			}
+		}
+
 		// mylog.Printf("群组发信息messageID:[%v] eventID:[%v]", messageID, eventID)
+
+		// 提取引用回复的目标消息ID
+		var replyMessageID string
+		if rmid, ok := message.Params.ReplyMessageID.(string); ok && rmid != "" {
+			replyMessageID = rmid
+		}
+
 		var singleItem = make(map[string][]string)
 		var imageType, imageUrl string
 		imageCount := 0
@@ -368,6 +384,14 @@ func HandleSendGroupMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openap
 				groupMessage.Timestamp = time.Now().Unix() // 设置时间戳
 			}
 
+			// 附加引用回复
+			if replyMessageID != "" {
+				groupMessage.MessageReference = &dto.MessageReference{
+					MessageID:             replyMessageID,
+					IgnoreGetMessageError: true,
+				}
+			}
+
 			var resp *dto.GroupMessageResponse
 			// 发送组合消息
 			resp, err = apiv2.PostGroupMessage(context.TODO(), message.Params.GroupID.(string), groupMessage)
@@ -431,6 +455,13 @@ func HandleSendGroupMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openap
 
 			var resp *dto.GroupMessageResponse
 			groupMessage.Timestamp = time.Now().Unix() // 设置时间戳
+			// 附加引用回复
+			if replyMessageID != "" {
+				groupMessage.MessageReference = &dto.MessageReference{
+					MessageID:             replyMessageID,
+					IgnoreGetMessageError: true,
+				}
+			}
 			//重新为err赋值
 			resp, err = apiv2.PostGroupMessage(context.TODO(), message.Params.GroupID.(string), groupMessage)
 			if err != nil {

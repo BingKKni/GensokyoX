@@ -209,6 +209,19 @@ func HandleSendPrivateMsg(client callapi.Client, api openapi.OpenAPI, apiv2 open
 			eventID = ""
 		}
 
+		// 调用方显式指定 message_id == "0" 时，强制以主动消息方式发送（不附带 msg_id）
+		// 若已有可用 event_id 仍会附带，行为与 lazy_message_id == "2000" 一致
+		if mid, ok := message.Params.MessageID.(string); ok && mid == "0" {
+			messageID = ""
+			if eventID == "" {
+				if len(message.Params.UserID.(string)) != 32 {
+					eventID = GetEventIDByUseridOrGroupid(config.GetAppIDStr(), message.Params.UserID)
+				} else {
+					eventID = GetEventIDByUseridOrGroupidv2(config.GetAppIDStr(), message.Params.UserID)
+				}
+			}
+		}
+
 		//开发环境用 私聊不可用1000
 		// if config.GetDevMsgID() {
 		// 	messageID = "1000"

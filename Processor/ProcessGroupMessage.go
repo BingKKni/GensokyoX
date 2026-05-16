@@ -13,6 +13,7 @@ import (
 	"github.com/hoshinonyaruko/gensokyo/handlers"
 	"github.com/hoshinonyaruko/gensokyo/idmap"
 	"github.com/hoshinonyaruko/gensokyo/mylog"
+	"github.com/hoshinonyaruko/gensokyo/recentmsg"
 
 	"github.com/tencent-connect/botgo/dto"
 	"github.com/tencent-connect/botgo/websocket/client"
@@ -157,6 +158,24 @@ func (p *Processors) ProcessGroupMessage(data *dto.WSGroupATMessageData, origina
 	groupMsg.RealMessageType = "group"
 	groupMsg.RealGroupID = data.GroupID
 	groupMsg.RealUserID = data.Author.ID
+
+	eventType := "GROUP_AT_MESSAGE_CREATE"
+	if strings.Contains(string(originalRaw), "GROUP_MESSAGE_CREATE") {
+		eventType = "GROUP_MESSAGE_CREATE"
+	}
+	recentmsg.AddGroupMessage(recentmsg.GroupMessage{
+		EventType:     eventType,
+		MessageID:     messageID,
+		RealMessageID: data.ID,
+		GroupID:       strconv.FormatInt(GroupID64, 10),
+		RealGroupID:   data.GroupID,
+		UserID:        strconv.FormatInt(userid64, 10),
+		RealUserID:    data.Author.ID,
+		Content:       messageText,
+		ReceivedAt:    time.Now().Unix(),
+		RawEvent:      string(originalRaw),
+	})
+
 	// 将当前s和appid和message进行映射
 	echo.AddMsgID(AppIDString, s, data.ID)
 	echo.AddMsgType(AppIDString, s, "group")
