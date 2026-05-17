@@ -82,9 +82,9 @@ func (p *Processors) ProcessGroupMessage(data *dto.WSGroupATMessageData, origina
 	//当屏蔽错误通道时候=性能模式 不解析at 不解析图片
 	if !GetDisableErrorChan {
 		// 转换at
-		messageText = handlers.RevertTransformedText(data, "group", p.Api, p.Apiv2, GroupID64, userid64, true)
+		messageText = handlers.RevertTransformedText(data, "group", p.Api, p.Apiv2, GroupID64, userid64)
 		if messageText == "" {
-			mylog.Printf("信息被自定义黑白名单拦截")
+			mylog.Printf("空消息或转换失败,跳过")
 			return nil
 		}
 

@@ -25,9 +25,9 @@ func (p *Processors) ProcessGuildATMessage(data *dto.WSATMessageData, originalRa
 		//获取s
 		s := client.GetGlobalS()
 		//转换at
-		messageText := handlers.RevertTransformedText(data, "guild", p.Api, p.Apiv2, 10000, 10000, true) //todo 这里未转换
+		messageText := handlers.RevertTransformedText(data, "guild", p.Api, p.Apiv2, 10000, 10000) //todo 这里未转换
 		if messageText == "" {
-			mylog.Printf("信息被自定义黑白名单拦截")
+			mylog.Printf("空消息或转换失败,跳过")
 			return nil
 		}
 		//框架内指令
@@ -130,9 +130,9 @@ func (p *Processors) ProcessGuildATMessage(data *dto.WSATMessageData, originalRa
 		//储存原来的(获取群列表需要)
 		idmap.WriteConfigv2(data.ChannelID, "guild_id", data.GuildID)
 		//转换at和图片
-		messageText := handlers.RevertTransformedText(data, "guild", p.Api, p.Apiv2, ChannelID64, userid64, true)
+		messageText := handlers.RevertTransformedText(data, "guild", p.Api, p.Apiv2, ChannelID64, userid64)
 		if messageText == "" {
-			mylog.Printf("信息被自定义黑白名单拦截")
+			mylog.Printf("空消息或转换失败,跳过")
 			return nil
 		}
 		//框架内指令

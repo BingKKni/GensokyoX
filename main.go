@@ -86,7 +86,7 @@ func main() {
 				ip = "127.0.0.1"
 			}
 		}
-		// 将 <YOUR_SERVER_DIR> 替换成实际的内网IP地址 确保初始状态webui能够被访问
+		// 将 <YOUR_SERVER_DIR> 替换成实际的内网IP地址
 		configData := strings.Replace(template.ConfigTemplate, "<YOUR_SERVER_DIR>", ip, -1)
 
 		// 将修改后的配置写入 config.yml

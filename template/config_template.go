@@ -8,7 +8,7 @@ settings:
   ws_token: ["","",""]              #连接wss地址时服务器所需的token,按顺序一一对应,如果是ws地址,没有密钥,请留空.
   reconnect_times : 100             #反向ws连接失败后的重试次数,希望一直重试,可设置9999
   heart_beat_interval : 5          #反向ws心跳间隔 单位秒 推荐5-10
-  launch_reconnect_times : 1        #启动时尝试反向ws连接次数,建议先打开应用端再开启gensokyo,因为启动时连接会阻塞webui启动,默认只连接一次,可自行增大
+  launch_reconnect_times : 1        #启动时尝试反向ws连接次数,建议先打开应用端再开启gensokyo,默认只连接一次,可自行增大
 
   #基础设置
   app_id: 12345                                      # 你的应用ID
@@ -50,7 +50,7 @@ settings:
   #Gensokyo互联类
   server_dir: "<YOUR_SERVER_DIR>"                    # Lotus地址.不带http头的域名或ip,提供图片上传服务的服务器(图床)需要带端口号. 如果需要发base64图,需为公网ip,且开放对应端口
   port: "15630"                                      # Lotus端口.idmaps和图床对外开放的端口号,若要连接到另一个gensokyo,也是链接端口
-  backup_port : "5200"                               # 当totus为ture时,port值不再是本地webui的端口,使用lotus_Port来访问webui
+  backup_port : "5200"                               # 当lotus为true时,port值不再是本地的主服务端口,使用lotus_port来访问本地服务
   lotus: false                                       # lotus特性默认为false,当为true时,将会连接到另一个lotus为false的gensokyo。使用它提供的图床和idmaps服务(场景:同一个机器人在不同服务器运行,或内网需要发送base64图)。如果需要发送base64图片,需要设置正确的公网server_dir和开放对应的port, lotus鉴权 设置后,从gsk需要保持相同密码来访问主gsk
   lotus_password : "" 
   lotus_without_idmaps: false       #lotus只通过url,图片上传,语音,不通过id转换,在本地当前gsk维护idmaps转换.
@@ -96,11 +96,6 @@ settings:
   log_level : 1                     # 0=debug 1=info 2=warning 3=error 默认1
   save_logs : false                 #自动储存日志
   log_suffix_per_mins : 0           #默认0,代表不切分日志文件,设置60代表每60分钟储存一个日志文件,如果你的日志文件太大打不开,可以设置这个到合适的时间范围.
-
-  #webui设置
-  disable_webui: false              #禁用webui
-  server_user_name : "useradmin"    #默认网页面板用户名
-  server_user_password : "admin"    #默认网页面板密码
 
   #指令魔法类
   remove_prefix : false             #是否忽略公域机器人指令前第一个/

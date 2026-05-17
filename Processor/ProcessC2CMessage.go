@@ -92,9 +92,9 @@ func (p *Processors) ProcessC2CMessage(data *dto.WSC2CMessageData, originalRaw [
 			}
 		}
 		//转换at
-		messageText := handlers.RevertTransformedText(data, "group_private", p.Api, p.Apiv2, userid64, userid64, true)
+		messageText := handlers.RevertTransformedText(data, "group_private", p.Api, p.Apiv2, userid64, userid64)
 		if messageText == "" {
-			mylog.Printf("信息被自定义黑白名单拦截")
+			mylog.Printf("空消息或转换失败,跳过")
 			return nil
 		}
 		//框架内指令
@@ -181,9 +181,9 @@ func (p *Processors) ProcessC2CMessage(data *dto.WSC2CMessageData, originalRaw [
 			}
 		}
 		//转换at
-		messageText := handlers.RevertTransformedText(data, "group_private", p.Api, p.Apiv2, userid64, userid64, true)
+		messageText := handlers.RevertTransformedText(data, "group_private", p.Api, p.Apiv2, userid64, userid64)
 		if messageText == "" {
-			mylog.Printf("信息被自定义黑白名单拦截")
+			mylog.Printf("空消息或转换失败,跳过")
 			return nil
 		}
 		//框架内指令

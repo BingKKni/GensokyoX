@@ -12,7 +12,7 @@ import (
 )
 
 func init() {
-	callapi.RegisterHandler("get_group_ban", SetGroupBan)
+	callapi.RegisterHandler("set_group_ban", SetGroupBan)
 }
 
 func SetGroupBan(client callapi.Client, api openapi.OpenAPI, apiv2 openapi.OpenAPI, message callapi.ActionMessage) (string, error) {

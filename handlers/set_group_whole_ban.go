@@ -11,7 +11,7 @@ import (
 )
 
 func init() {
-	callapi.RegisterHandler("get_group_whole_ban", SetGroupWholeBan)
+	callapi.RegisterHandler("set_group_whole_ban", SetGroupWholeBan)
 }
 
 func SetGroupWholeBan(client callapi.Client, api openapi.OpenAPI, apiv2 openapi.OpenAPI, message callapi.ActionMessage) (string, error) {
