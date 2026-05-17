@@ -69,24 +69,27 @@ func (a *ActionMessage) UnmarshalJSON(data []byte) error {
 
 // params类型
 type ParamsContent struct {
-	BotQQ     string      `json:"botqq,omitempty"`
-	ChannelID interface{} `json:"channel_id,omitempty"`
-	GuildID   interface{} `json:"guild_id,omitempty"`
-	GroupID   interface{} `json:"group_id,omitempty"`   // 每一种onebotv11实现的字段类型都可能不同
-	MessageID interface{} `json:"message_id,omitempty"` // 用于撤回信息
-	Message   interface{} `json:"message,omitempty"`    // 这里使用interface{}因为它可能是多种类型
-	Messages  interface{} `json:"messages,omitempty"`   // 坑爹转发信息
-	UserID    interface{} `json:"user_id,omitempty"`    // 这里使用interface{}因为它可能是多种类型
-	Duration  int         `json:"duration,omitempty"`   // 可选的整数
-	Enable    bool        `json:"enable,omitempty"`     // 可选的布尔值
-	EventID   interface{} `json:"event_id,omitempty"`   // 事件ID，用于消息关联
-	IsWakeup  bool        `json:"is_wakeup,omitempty"`  // 指明发送消息为互动召回消息，与 msg_id，event_id 互斥使用
+	BotQQ         string      `json:"botqq,omitempty"`
+	ChannelID     interface{} `json:"channel_id,omitempty"`
+	GuildID       interface{} `json:"guild_id,omitempty"`
+	GroupID       interface{} `json:"group_id,omitempty"`        // 每一种onebotv11实现的字段类型都可能不同
+	MessageID     interface{} `json:"message_id,omitempty"`      // 用于撤回信息
+	RealMessageID interface{} `json:"real_message_id,omitempty"` // 平台原始消息ID，用于撤回信息
+	Message       interface{} `json:"message,omitempty"`         // 这里使用interface{}因为它可能是多种类型
+	Messages      interface{} `json:"messages,omitempty"`        // 坑爹转发信息
+	UserID        interface{} `json:"user_id,omitempty"`         // 这里使用interface{}因为它可能是多种类型
+	Duration      int         `json:"duration,omitempty"`        // 可选的整数
+	Enable        bool        `json:"enable,omitempty"`          // 可选的布尔值
+	EventID       interface{} `json:"event_id,omitempty"`        // 事件ID，用于消息关联
+	IsWakeup      bool        `json:"is_wakeup,omitempty"`       // 指明发送消息为互动召回消息，与 msg_id，event_id 互斥使用
 	// 新增：交互回应相关字段
 	InteractionID   interface{} `json:"interaction_id,omitempty"`   // 交互ID，用于手动回应按钮回调
 	InteractionCode interface{} `json:"interaction_code,omitempty"` // 回应代码 (0:成功, 1:操作失败, 2:操作频繁, 3:重复操作, 4:没有权限, 5:仅管理员操作)
 	// handle quick operation
 	Context   Context   `json:"context,omitempty"`   // context 字段
 	Operation Operation `json:"operation,omitempty"` // operation 字段
+	// 引用回复相关
+	ReplyMessageID interface{} `json:"reply_message_id,omitempty"` // 要引用回复的目标消息ID（平台真实消息ID）
 	// 文件上传相关
 	URL      string      `json:"url,omitempty"`       // 文件下载地址
 	FileName string      `json:"file_name,omitempty"` // 文件名
@@ -117,12 +120,14 @@ func (p *ParamsContent) UnmarshalJSON(data []byte) error {
 		GroupID         interface{} `json:"group_id"`
 		UserID          interface{} `json:"user_id"`
 		MessageID       interface{} `json:"message_id"`
+		RealMessageID   interface{} `json:"real_message_id"`
 		ChannelID       interface{} `json:"channel_id"`
 		GuildID         interface{} `json:"guild_id"`
 		EventID         interface{} `json:"event_id"`
 		InteractionID   interface{} `json:"interaction_id"`
 		InteractionCode interface{} `json:"interaction_code"`
 		FileType        interface{} `json:"file_type"`
+		ReplyMessageID  interface{} `json:"reply_message_id"`
 		*Alias
 	}{
 		Alias: (*Alias)(p),
@@ -162,6 +167,17 @@ func (p *ParamsContent) UnmarshalJSON(data []byte) error {
 		p.MessageID = v
 	default:
 		return fmt.Errorf("MessageID has unsupported type")
+	}
+
+	switch v := aux.RealMessageID.(type) {
+	case nil:
+		p.RealMessageID = ""
+	case float64:
+		p.RealMessageID = fmt.Sprintf("%.0f", v)
+	case string:
+		p.RealMessageID = v
+	default:
+		return fmt.Errorf("RealMessageID has unsupported type")
 	}
 
 	switch v := aux.ChannelID.(type) {
@@ -244,6 +260,18 @@ func (p *ParamsContent) UnmarshalJSON(data []byte) error {
 		}
 	default:
 		return fmt.Errorf("FileType has unsupported type")
+	}
+
+	// 处理ReplyMessageID
+	switch v := aux.ReplyMessageID.(type) {
+	case nil:
+		p.ReplyMessageID = ""
+	case float64:
+		p.ReplyMessageID = fmt.Sprintf("%.0f", v)
+	case string:
+		p.ReplyMessageID = v
+	default:
+		return fmt.Errorf("ReplyMessageID has unsupported type")
 	}
 
 	return nil
