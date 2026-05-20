@@ -2,6 +2,7 @@
 package Processor
 
 import (
+	"fmt"
 	"math/rand"
 	"strconv"
 
@@ -123,6 +124,9 @@ func (p *Processors) ProcessGroupAddBot(data *dto.GroupAddBotEvent, originalRaw 
 	echo.AddEvnetID(AppIDString, GroupID64, data.EventID)
 	// 确保也存储了32位字符串格式的eventID映射
 	echo.AddEvnetIDv2(AppIDString, data.GroupOpenID, data.EventID)
+
+	echo.AddMsgType(AppIDString, GroupID64, "group")
+	idmap.WriteConfigv2(fmt.Sprint(GroupID64), "type", "group")
 
 	mylog.Printf("Bot被[%v]邀请进入群[%v]eventid[%v]", userid64, GroupID64, data.EventID)
 
