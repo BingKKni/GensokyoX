@@ -10,4 +10,5 @@ channel_temp/
 log/
 #ignore data
 data/
-**/output/
+output/*
+!output/build-linux-amd64.ps1
