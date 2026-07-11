@@ -254,6 +254,8 @@ func (p *Processors) ProcessInlineSearch(data *dto.WSInteractionData, originalRa
 			}
 			//enhanced config
 			privateMsg.RealMessageType = "interaction"
+			// 补上真实用户ID: 群回调分支有设置而这里此前遗漏, 应用端只能靠 original.d.user_openid 兜底
+			privateMsg.RealUserID = fromuid
 			// 添加msgID映射，确保应用端回复时能正确获取messageID
 			// 将当前s和appid和message进行映射
 			echo.AddMsgID(AppIDString, s, data.ID)

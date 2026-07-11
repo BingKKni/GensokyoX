@@ -277,6 +277,13 @@ func CheckValuev2(value int64) bool {
 
 // 根据a储存b
 func StoreID(id string) (int64, error) {
+	// 空ID直接返回0: bbolt不允许空key, 正向映射永远存不进去,
+	// 否则每次调用都会白白递增计数器并写入一条孤儿反向记录
+	// (场景: 私聊按钮回调没有群ID, ProcessInlineSearch 会以空串来取群映射)
+	if id == "" {
+		return 0, nil
+	}
+
 	var newRow int64
 
 	err := db.Update(func(tx *bbolt.Tx) error {
@@ -402,6 +409,11 @@ func StoreCache(id string) (int64, error) {
 }
 
 func SimplifiedStoreID(id string) (int64, error) {
+	// 与 StoreID 相同的空ID防护, 避免空key映射失败导致的重复分配
+	if id == "" {
+		return 0, nil
+	}
+
 	var newRow int64
 
 	err := db.Update(func(tx *bbolt.Tx) error {
