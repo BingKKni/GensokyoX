@@ -81,6 +81,8 @@ var eventParseFuncMap = map[dto.OPCode]map[dto.EventType]eventParseFunc{
 		dto.EventGroupDelRobot:        groupdelbothandler,
 		dto.EventGroupMsgReject:       groupMsgRejecthandler,
 		dto.EventGroupMsgReceive:      groupMsgReceivehandler,
+		dto.EventGroupMemberAdd:       groupMemberAddHandler,
+		dto.EventGroupMemberRemove:    groupMemberRemoveHandler,
 	},
 }
 
@@ -146,6 +148,15 @@ func ParseData(message []byte, target interface{}) error {
 
 	case *dto.GroupMsgReceiveEvent:
 		// 特殊处理dto.GroupMsgReceiveEvent
+		if err := json.Unmarshal([]byte(data.String()), v); err != nil {
+			return err
+		}
+		// 设置ID字段
+		v.EventID = eventid
+		return nil
+
+	case *dto.GroupMemberEvent:
+		// 特殊处理dto.GroupMemberEvent
 		if err := json.Unmarshal([]byte(data.String()), v); err != nil {
 			return err
 		}
@@ -411,6 +422,36 @@ func groupMsgReceivehandler(payload *dto.WSPayload, message []byte) error {
 	}
 	if DefaultHandlers.GroupMsgReceive != nil {
 		return DefaultHandlers.GroupMsgReceive(payload, data)
+	}
+	return nil
+}
+
+func groupMemberAddHandler(payload *dto.WSPayload, message []byte) error {
+	data := &dto.GroupMemberEvent{}
+	if err := ParseData(message, data); err != nil {
+		return err
+	}
+	// 使用 EventID 进行去重，防止重复处理
+	if _, loaded := processedIDs.LoadOrStore(data.EventID, struct{}{}); loaded {
+		return nil
+	}
+	if DefaultHandlers.GroupMemberAdd != nil {
+		return DefaultHandlers.GroupMemberAdd(payload, data)
+	}
+	return nil
+}
+
+func groupMemberRemoveHandler(payload *dto.WSPayload, message []byte) error {
+	data := &dto.GroupMemberEvent{}
+	if err := ParseData(message, data); err != nil {
+		return err
+	}
+	// 使用 EventID 进行去重，防止重复处理
+	if _, loaded := processedIDs.LoadOrStore(data.EventID, struct{}{}); loaded {
+		return nil
+	}
+	if DefaultHandlers.GroupMemberRemove != nil {
+		return DefaultHandlers.GroupMemberRemove(payload, data)
 	}
 	return nil
 }

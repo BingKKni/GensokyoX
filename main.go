@@ -780,6 +780,22 @@ func GroupMsgReceiveHandler() event.GroupMsgReceiveHandler {
 	}
 }
 
+// GroupMemberAddEventHandler 实现处理 群成员新增 事件的回调
+func GroupMemberAddEventHandler() event.GroupMemberAddEventHandler {
+	return func(event *dto.WSPayload, data *dto.GroupMemberEvent) error {
+		go p.ProcessGroupMemberAdd(data, event.RawMessage)
+		return nil
+	}
+}
+
+// GroupMemberRemoveEventHandler 实现处理 群成员减少 事件的回调
+func GroupMemberRemoveEventHandler() event.GroupMemberRemoveEventHandler {
+	return func(event *dto.WSPayload, data *dto.GroupMemberEvent) error {
+		go p.ProcessGroupMemberRemove(data, event.RawMessage)
+		return nil
+	}
+}
+
 func getHandlerByName(handlerName string) (interface{}, bool) {
 	switch handlerName {
 	case "ReadyHandler": //连接成功
@@ -814,6 +830,10 @@ func getHandlerByName(handlerName string) (interface{}, bool) {
 		return GroupMsgRejectHandler(), true
 	case "GroupMsgReceiveHandler": //群请求开启机器人主动推送
 		return GroupMsgReceiveHandler(), true
+	case "GroupMemberAddEventHandler": //群成员新增
+		return GroupMemberAddEventHandler(), true
+	case "GroupMemberRemoveEventHandler": //群成员减少
+		return GroupMemberRemoveEventHandler(), true
 	default:
 		log.Printf("Unknown handler: %s\n", handlerName)
 		return nil, false

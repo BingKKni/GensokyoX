@@ -17,29 +17,30 @@ import (
 
 // GroupRequestEvent 表示群组请求事件的数据结构
 type GroupRequestEvent struct {
-	Comment     string `json:"comment"`
-	Flag        string `json:"flag"`
-	GroupID     int64  `json:"group_id"`
-	PostType    string `json:"post_type"`
-	RequestType string `json:"request_type"`
-	SubType     string `json:"sub_type"`
-	UserID      int64  `json:"user_id"`
+	Comment     string      `json:"comment"`
+	Flag        string      `json:"flag"`
+	GroupID     int64       `json:"group_id"`
+	PostType    string      `json:"post_type"`
+	RequestType string      `json:"request_type"`
+	SubType     string      `json:"sub_type"`
+	UserID      int64       `json:"user_id"`
 	Original    interface{} `json:"original"`
-	RealUserID  string `json:"real_user_id,omitempty"`  //当前真实uid
-	RealGroupID string `json:"real_group_id,omitempty"` //当前真实gid
+	RealUserID  string      `json:"real_user_id,omitempty"`  //当前真实uid
+	RealGroupID string      `json:"real_group_id,omitempty"` //当前真实gid
 }
 
 // GroupNoticeEvent 表示群通知事件的数据结构
 type GroupNoticeEvent struct {
-	GroupID     int64  `json:"group_id"`
-	NoticeType  string `json:"notice_type"`
-	OperatorID  int64  `json:"operator_id"`
-	PostType    string `json:"post_type"`
-	SubType     string `json:"sub_type"`
-	UserID      int64  `json:"user_id"`
+	GroupID     int64       `json:"group_id"`
+	NoticeType  string      `json:"notice_type"`
+	OperatorID  int64       `json:"operator_id"`
+	PostType    string      `json:"post_type"`
+	SubType     string      `json:"sub_type"`
+	UserID      int64       `json:"user_id"`
+	EventID     int64       `json:"event_id,omitempty"`
 	Original    interface{} `json:"original"`
-	RealUserID  string `json:"real_user_id,omitempty"`  //当前真实uid
-	RealGroupID string `json:"real_group_id,omitempty"` //当前真实gid
+	RealUserID  string      `json:"real_user_id,omitempty"`  //当前真实uid
+	RealGroupID string      `json:"real_group_id,omitempty"` //当前真实gid
 }
 
 // 定义了一个符合 Client 接口的 SelfIntroduceClient 结构体

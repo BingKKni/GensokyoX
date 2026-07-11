@@ -32,12 +32,14 @@ var DefaultHandlers struct {
 
 	Interaction InteractionEventHandler
 
-	GroupATMessage  GroupATMessageEventHandler
-	C2CMessage      C2CMessageEventHandler
-	GroupAddbot     GroupAddRobotEventHandler
-	GroupDelbot     GroupDelRobotEventHandler
-	GroupMsgReject  GroupMsgRejectHandler
-	GroupMsgReceive GroupMsgReceiveHandler
+	GroupATMessage    GroupATMessageEventHandler
+	C2CMessage        C2CMessageEventHandler
+	GroupAddbot       GroupAddRobotEventHandler
+	GroupDelbot       GroupDelRobotEventHandler
+	GroupMsgReject    GroupMsgRejectHandler
+	GroupMsgReceive   GroupMsgReceiveHandler
+	GroupMemberAdd    GroupMemberAddEventHandler
+	GroupMemberRemove GroupMemberRemoveEventHandler
 }
 
 // ReadyHandler 可以处理 ws 的 ready 事件
@@ -121,6 +123,12 @@ type GroupMsgRejectHandler func(event *dto.WSPayload, data *dto.GroupMsgRejectEv
 // GroupMsgReceiveHandler 机器人推送开启事件 handler
 type GroupMsgReceiveHandler func(event *dto.WSPayload, data *dto.GroupMsgReceiveEvent) error
 
+// GroupMemberAddEventHandler 群成员新增事件 handler
+type GroupMemberAddEventHandler func(event *dto.WSPayload, data *dto.GroupMemberEvent) error
+
+// GroupMemberRemoveEventHandler 群成员减少事件 handler
+type GroupMemberRemoveEventHandler func(event *dto.WSPayload, data *dto.GroupMemberEvent) error
+
 // ************************************************
 
 // RegisterHandlers 注册事件回调，并返回 intent 用于 websocket 的鉴权
@@ -151,6 +159,12 @@ func RegisterHandlers(handlers ...interface{}) dto.Intent {
 			DefaultHandlers.GroupMsgReject = handle
 		case GroupMsgReceiveHandler:
 			DefaultHandlers.GroupMsgReceive = handle
+		case GroupMemberAddEventHandler:
+			DefaultHandlers.GroupMemberAdd = handle
+			i = i | dto.EventToIntent(dto.EventGroupMemberAdd)
+		case GroupMemberRemoveEventHandler:
+			DefaultHandlers.GroupMemberRemove = handle
+			i = i | dto.EventToIntent(dto.EventGroupMemberRemove)
 		default:
 		}
 	}

@@ -34,6 +34,8 @@ settings:
     # - "InteractionHandler"                         # 添加频道互动回应 卡片按钮data回调事件
     # - "GroupATMessageEventHandler"                 # 群at信息 仅频道机器人时候需要注释
     # - "C2CMessageEventHandler"                     # 群私聊 仅频道机器人时候需要注释
+    # - "GroupMemberAddEventHandler"                 # 群成员新增事件
+    # - "GroupMemberRemoveEventHandler"              # 群成员减少事件
     # - "ThreadEventHandler"                         # 频道发帖事件 仅频道私域机器人可用
 
   #转换类

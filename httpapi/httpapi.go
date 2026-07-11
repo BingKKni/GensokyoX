@@ -132,6 +132,7 @@ func handleSendGroupMessage(c *gin.Context, api openapi.OpenAPI, apiV2 openapi.O
 		Message        string `json:"message" form:"message"`
 		AutoEscape     bool   `json:"auto_escape" form:"auto_escape"`
 		MessageID      string `json:"message_id,omitempty" form:"message_id"`
+		EventID        string `json:"event_id,omitempty" form:"event_id"`
 		ReplyMessageID string `json:"reply_message_id,omitempty" form:"reply_message_id"`
 	}
 
@@ -167,6 +168,10 @@ func handleSendGroupMessage(c *gin.Context, api openapi.OpenAPI, apiV2 openapi.O
 	// 显式指定 message_id 时透传，下游会识别 "0" 走强制主动消息逻辑
 	if req.MessageID != "" {
 		message.Params.MessageID = req.MessageID
+	}
+	// 显式指定 event_id 时透传，优先于 lazy_message_id/event_id 缓存。
+	if req.EventID != "" {
+		message.Params.EventID = req.EventID
 	}
 	// 引用回复：透传 reply_message_id
 	if req.ReplyMessageID != "" {

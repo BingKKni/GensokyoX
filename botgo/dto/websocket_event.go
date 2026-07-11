@@ -45,6 +45,8 @@ const (
 	EventGroupDelRobot         EventType = "GROUP_DEL_ROBOT"
 	EventGroupMsgReject        EventType = "GROUP_MSG_REJECT"
 	EventGroupMsgReceive       EventType = "GROUP_MSG_RECEIVE"
+	EventGroupMemberAdd        EventType = "GROUP_MEMBER_ADD"
+	EventGroupMemberRemove     EventType = "GROUP_MEMBER_REMOVE"
 )
 
 // intentEventMap 不同 intent 对应的事件定义
@@ -55,7 +57,7 @@ var intentEventMap = map[Intent][]EventType{
 	},
 	IntentGuildMembers:  {EventGuildMemberAdd, EventGuildMemberUpdate, EventGuildMemberRemove},
 	IntentGuildMessages: {EventMessageCreate, EventMessageDelete},
-	IntentGroupMessages: {EventGroupAtMessageCreate, EventGroupMessageCreate, EventC2CMessageCreate, EventGroupAddRobot, EventGroupDelRobot},
+	IntentGroupMessages: {EventGroupAtMessageCreate, EventGroupMessageCreate, EventC2CMessageCreate, EventGroupAddRobot, EventGroupDelRobot, EventGroupMemberAdd, EventGroupMemberRemove},
 
 	IntentGuildMessageReactions: {EventMessageReactionAdd, EventMessageReactionRemove},
 	IntentGuildAtMessage:        {EventAtMessageCreate, EventPublicMessageDelete},

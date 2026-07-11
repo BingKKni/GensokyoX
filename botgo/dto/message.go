@@ -74,6 +74,13 @@ type GroupMsgReceiveEvent struct {
 	Timestamp      interface{} `json:"timestamp"`
 }
 
+type GroupMemberEvent struct {
+	EventID      string      `json:"event_id"`
+	GroupOpenID  string      `json:"group_openid"`
+	MemberOpenID string      `json:"member_openid"`
+	Timestamp    interface{} `json:"timestamp"`
+}
+
 type MediaResponse struct {
 	//UUID
 	FileUUID string `json:"file_uuid"`
@@ -84,7 +91,7 @@ type MediaResponse struct {
 	Ret int `json:"ret,omitempty"`
 }
 
-//群信息结构
+// 群信息结构
 type GroupMessageResponse struct {
 	MediaResponse *MediaResponse
 	Message       *Message
