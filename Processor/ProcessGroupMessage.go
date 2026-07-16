@@ -163,10 +163,13 @@ func (p *Processors) ProcessGroupMessage(data *dto.WSGroupATMessageData, origina
 	if strings.Contains(string(originalRaw), "GROUP_MESSAGE_CREATE") {
 		eventType = "GROUP_MESSAGE_CREATE"
 	}
+	msgIdx, refMsgIdx := parseReferenceIndicesFromRaw(originalRaw)
 	recentmsg.AddGroupMessage(recentmsg.GroupMessage{
 		EventType:     eventType,
 		MessageID:     messageID,
 		RealMessageID: data.ID,
+		MsgIdx:        msgIdx,
+		RefMsgIdx:     refMsgIdx,
 		GroupID:       strconv.FormatInt(GroupID64, 10),
 		RealGroupID:   data.GroupID,
 		UserID:        strconv.FormatInt(userid64, 10),

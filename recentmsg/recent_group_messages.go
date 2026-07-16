@@ -8,6 +8,8 @@ type GroupMessage struct {
 	EventType     string `json:"event_type"`
 	MessageID     int    `json:"message_id"`
 	RealMessageID string `json:"real_message_id"`
+	MsgIdx        string `json:"msg_idx,omitempty"`
+	RefMsgIdx     string `json:"ref_msg_idx,omitempty"`
 	GroupID       string `json:"group_id"`
 	RealGroupID   string `json:"real_group_id"`
 	UserID        string `json:"user_id"`

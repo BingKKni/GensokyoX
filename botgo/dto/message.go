@@ -39,8 +39,14 @@ type Message struct {
 	MessageReference *MessageReference `json:"message_reference,omitempty"`
 	// 私信场景下，该字段用来标识从哪个频道发起的私信
 	SrcGuildID string `json:"src_guild_id"`
+	// 平台返回的扩展信息，包含消息自身的引用索引
+	ExtInfo *MessageExtInfo `json:"ext_info,omitempty"`
 	//返回的ret 超过主动限制会返回22009
 	Ret int `json:"ret,omitempty"`
+}
+
+type MessageExtInfo struct {
+	RefIdx string `json:"ref_idx,omitempty"`
 }
 
 // Forum 消息结构体定义

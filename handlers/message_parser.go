@@ -44,6 +44,7 @@ type ServerResponse struct {
 		FileUUID      string `json:"file_uuid,omitempty"`
 		FileInfo      string `json:"file_info,omitempty"`
 		TTL           int    `json:"ttl,omitempty"`
+		RefIdx        string `json:"ref_idx,omitempty"`
 	} `json:"data"`
 	Message   string `json:"message"`
 	ErrorCode int    `json:"error_code,omitempty"`
@@ -143,7 +144,7 @@ func SendResponse(client callapi.Client, err error, message *callapi.ActionMessa
 
 	// 设置响应值
 	response := ServerResponse{}
-	if resp != nil && err == nil {
+	if resp != nil && resp.Message != nil && err == nil {
 		if config.GetMemoryMsgid() {
 			messageID64, mapErr = echo.StoreCacheInMemory(resp.Message.ID)
 			if mapErr != nil {
@@ -160,6 +161,9 @@ func SendResponse(client callapi.Client, err error, message *callapi.ActionMessa
 
 		response.Data.MessageID = int(messageID64)
 		response.Data.RealMessageID = resp.Message.ID
+		if resp.Message.ExtInfo != nil {
+			response.Data.RefIdx = resp.Message.ExtInfo.RefIdx
+		}
 		// 发送成功 增加今日发信息数
 		botstats.RecordMessageSent()
 	}
