@@ -3,10 +3,8 @@ package Processor
 
 import (
 	"fmt"
-	"strconv"
 
 	"github.com/hoshinonyaruko/gensokyo/config"
-	"github.com/hoshinonyaruko/gensokyo/echo"
 	"github.com/hoshinonyaruko/gensokyo/idmap"
 	"github.com/hoshinonyaruko/gensokyo/mylog"
 	"github.com/tencent-connect/botgo/dto"
@@ -28,7 +26,6 @@ func (p *Processors) processGroupMemberChange(data *dto.GroupMemberEvent, origin
 	var eventID64 int64
 	var eventGroupID64 int64
 	var err error
-	appIDString := strconv.FormatUint(p.Settings.AppID, 10)
 
 	if data.EventID != "" {
 		eventID64, err = idmap.StoreIDv2(data.EventID)
@@ -81,15 +78,15 @@ func (p *Processors) processGroupMemberChange(data *dto.GroupMemberEvent, origin
 	notice.RealUserID = data.MemberOpenID
 	notice.RealGroupID = data.GroupOpenID
 
-	if data.EventID != "" {
-		if eventGroupID64 != 0 {
-			echo.AddEvnetID(appIDString, eventGroupID64, data.EventID)
-			echo.AddMsgType(appIDString, eventGroupID64, "group")
-		}
-		if data.GroupOpenID != "" {
-			echo.AddEvnetIDv2(appIDString, data.GroupOpenID, data.EventID)
-		}
-	}
+	// 注意: 群成员增减事件的 event_id 不能写入按群号索引的通用 event_id 槽。
+	// 该槽会被普通群发送在 msg_id 过期时兜底读取 (send_group_msg.go 的
+	// GetEventIDByUseridOrGroupid), 而成员事件的 event_id 是"单次可用"且
+	// 退群事件根本不允许回复, 一旦污染该槽, 后续普通消息会取到废弃/越权的
+	// event_id, 直接触发 40034025(event_id 无效)。
+	// 如需入群欢迎语, 应由应用端消费上报 notice 中的 event_id 并显式回传,
+	// 且仅允许发送一条, 而不是依赖这里写入共享槽。
+	// eventID64 仍在上方转换并放入 notice.EventID 供应用端使用, 此处不再写入 echo 映射。
+	_ = eventGroupID64
 
 	noticeMap := structToMap(notice)
 	go p.BroadcastMessageToAll(noticeMap, p.Apiv2, data)
