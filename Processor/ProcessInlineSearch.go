@@ -177,14 +177,17 @@ func (p *Processors) ProcessInlineSearch(data *dto.WSInteractionData, originalRa
 			groupMsg.RealUserID = data.GroupMemberOpenID
 
 			// 添加msgID映射，确保应用端回复时能正确获取messageID
-			// 将当前s和appid和message进行映射
+			// 将当前s和appid和message进行映射(仅按 s 关联, 用于双向 echo 精准回复, 不污染群级兜底槽)
 			echo.AddMsgID(AppIDString, s, data.ID)
 			// 映射消息类型
 			echo.AddMsgType(AppIDString, s, "group")
-			//为不支持双向echo的ob服务端映射
-			echo.AddMsgID(AppIDString, GroupID64, data.ID)
-			//将当前的userid和groupid和msgid进行一个更稳妥的映射
-			echo.AddMsgIDv2(AppIDString, GroupID64, userid64, data.ID)
+			// 注意: 交互(INTERACTION_CREATE)的 data.ID 是 UUID, 只能作为 event_id 使用,
+			// 绝不能写入按群号/群+用户索引的 msg_id 槽。否则普通群消息在 lazy msg_id 过期时,
+			// 会通过 GetMessageIDByUseridOrGroupid / GetMessageIDByUseridAndGroupid 兜底取到
+			// 这个 UUID 并塞进 msg_id 字段, 触发 40034024(请求参数msg_id无效或越权)。
+			// 交互回复应走下方的 event_id 槽(AddEvnetID), 交互事件可无限次被动发送。
+			// echo.AddMsgID(AppIDString, GroupID64, data.ID)              // 移除: 污染群级 msg_id 兜底槽
+			// echo.AddMsgIDv2(AppIDString, GroupID64, userid64, data.ID)  // 移除: 污染群+用户 msg_id 兜底槽
 
 			//储存当前群或频道号的类型
 			idmap.WriteConfigv2(fmt.Sprint(GroupID64), "type", "group")
@@ -257,12 +260,15 @@ func (p *Processors) ProcessInlineSearch(data *dto.WSInteractionData, originalRa
 			// 补上真实用户ID: 群回调分支有设置而这里此前遗漏, 应用端只能靠 original.d.user_openid 兜底
 			privateMsg.RealUserID = fromuid
 			// 添加msgID映射，确保应用端回复时能正确获取messageID
-			// 将当前s和appid和message进行映射
+			// 将当前s和appid和message进行映射(仅按 s 关联, 用于双向 echo 精准回复, 不污染用户级兜底槽)
 			echo.AddMsgID(AppIDString, s, data.ID)
 			// 映射类型 对S映射
 			echo.AddMsgType(AppIDString, s, "group_private")
-			//为不支持双向echo的ob服务端映射
-			echo.AddMsgID(AppIDString, userid64, data.ID)
+			// 注意: 交互(INTERACTION_CREATE)的 data.ID 是 UUID, 只能作为 event_id 使用,
+			// 绝不能写入按用户索引的 msg_id 槽。否则私聊普通消息在 lazy msg_id 过期时,
+			// 会通过 GetMessageIDByUseridOrGroupid 兜底取到这个 UUID 并塞进 msg_id 字段,
+			// 触发 40034024(请求参数msg_id无效或越权)。交互回复应走下方的 event_id 槽(AddEvnetID)。
+			// echo.AddMsgID(AppIDString, userid64, data.ID)  // 移除: 污染用户级 msg_id 兜底槽
 			// 映射类型 对userid64映射
 			echo.AddMsgType(AppIDString, userid64, "group_private")
 

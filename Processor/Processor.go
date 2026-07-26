@@ -167,6 +167,47 @@ func parseOriginalPayload(raw []byte) interface{} {
 	return payload
 }
 
+func parseReferenceIndicesFromRaw(raw []byte) (msgIdx string, refMsgIdx string) {
+	if len(raw) == 0 {
+		return "", ""
+	}
+
+	type referencePayloadData struct {
+		MessageScene struct {
+			Ext []string `json:"ext"`
+		} `json:"message_scene"`
+		MessageType int `json:"message_type"`
+		MsgElements []struct {
+			MsgIdx string `json:"msg_idx"`
+		} `json:"msg_elements"`
+	}
+
+	var payload struct {
+		Data referencePayloadData `json:"d"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return "", ""
+	}
+	data := payload.Data
+	if len(data.MessageScene.Ext) == 0 && data.MessageType == 0 && len(data.MsgElements) == 0 {
+		_ = json.Unmarshal(raw, &data)
+	}
+
+	for _, item := range data.MessageScene.Ext {
+		if strings.HasPrefix(item, "msg_idx=") {
+			msgIdx = strings.TrimPrefix(item, "msg_idx=")
+		} else if strings.HasPrefix(item, "ref_msg_idx=") {
+			refMsgIdx = strings.TrimPrefix(item, "ref_msg_idx=")
+		}
+	}
+
+	if data.MessageType == 103 && len(data.MsgElements) > 0 && data.MsgElements[0].MsgIdx != "" {
+		refMsgIdx = data.MsgElements[0].MsgIdx
+	}
+
+	return msgIdx, refMsgIdx
+}
+
 // 修改函数的返回类型为 *Processor
 func NewProcessor(api openapi.OpenAPI, apiv2 openapi.OpenAPI, settings *structs.Settings, wsclient []*wsclient.WebSocketClient) *Processors {
 	return &Processors{

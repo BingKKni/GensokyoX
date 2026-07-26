@@ -434,6 +434,20 @@ func HandleSendGroupMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openap
 						mylog.ErrLogToFile("error", err.Error())
 					}
 				}
+			} else if err != nil && (strings.Contains(err.Error(), `"code":40034024`) || strings.Contains(err.Error(), `"err_code":40034024`)) {
+				// msg_id无效或越权(40034024): 清空 MsgID 重发, 若有 event_id 则走被动, 否则转主动, 避免消息静默丢失
+				mylog.Printf("MsgID无效或越权（错误码40034024），尝试不使用MsgID重新发送")
+				groupMessage.MsgID = ""
+				resp, err = apiv2.PostGroupMessage(context.TODO(), message.Params.GroupID.(string), groupMessage)
+				if err != nil {
+					mylog.Printf("发送组合消息失败: %v", err)
+					// 错误保存到本地
+					if config.GetSaveError() {
+						mylog.ErrLogToFile("type", "PostGroupMessage")
+						mylog.ErrInterfaceToFile("request", groupMessage)
+						mylog.ErrLogToFile("error", err.Error())
+					}
+				}
 			} else if err != nil && strings.Contains(err.Error(), "context deadline exceeded") {
 				go postGroupMessageWithRetry(apiv2, message.Params.GroupID.(string), groupMessage)
 			}
@@ -493,6 +507,20 @@ func HandleSendGroupMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openap
 				// event_id无效的时候（包括40034025和11255错误码）
 				mylog.Printf("EventID无效（错误码40034025或11255），尝试不使用EventID重新发送")
 				groupMessage.EventID = ""
+				resp, err = apiv2.PostGroupMessage(context.TODO(), message.Params.GroupID.(string), groupMessage)
+				if err != nil {
+					mylog.Printf("发送文本群组信息失败: %v", err)
+					// 错误保存到本地
+					if config.GetSaveError() {
+						mylog.ErrLogToFile("type", "PostGroupMessage")
+						mylog.ErrInterfaceToFile("request", groupMessage)
+						mylog.ErrLogToFile("error", err.Error())
+					}
+				}
+			} else if err != nil && (strings.Contains(err.Error(), `"code":40034024`) || strings.Contains(err.Error(), `"err_code":40034024`)) {
+				// msg_id无效或越权(40034024): 清空 MsgID 重发, 若有 event_id 则走被动, 否则转主动, 避免消息静默丢失
+				mylog.Printf("MsgID无效或越权（错误码40034024），尝试不使用MsgID重新发送")
+				groupMessage.MsgID = ""
 				resp, err = apiv2.PostGroupMessage(context.TODO(), message.Params.GroupID.(string), groupMessage)
 				if err != nil {
 					mylog.Printf("发送文本群组信息失败: %v", err)
@@ -582,6 +610,21 @@ func HandleSendGroupMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openap
 									mylog.ErrLogToFile("error", err.Error())
 								}
 							}
+						} else if err != nil && (strings.Contains(err.Error(), `"code":40034024`) || strings.Contains(err.Error(), `"err_code":40034024`)) {
+							// msg_id无效或越权(40034024): 清空 MsgID 重发, 避免消息静默丢失
+							mylog.Printf("MsgID无效或越权（错误码40034024），尝试不使用MsgID重新发送")
+							groupMessage.MsgID = ""
+							//重新为err赋值
+							resp, err = apiv2.PostGroupMessage(context.TODO(), message.Params.GroupID.(string), groupMessage)
+							if err != nil {
+								mylog.Printf("发送 MessageToCreate 信息失败 on code 40034024: %v", err)
+								// 错误保存到本地
+								if config.GetSaveError() {
+									mylog.ErrLogToFile("type", "PostGroupMessage")
+									mylog.ErrInterfaceToFile("request", groupMessage)
+									mylog.ErrLogToFile("error", err.Error())
+								}
+							}
 						} else if err != nil && strings.Contains(err.Error(), "context deadline exceeded") {
 							go postGroupMessageWithRetry(apiv2, message.Params.GroupID.(string), groupMessage)
 						}
@@ -631,6 +674,14 @@ func HandleSendGroupMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openap
 							if err != nil {
 								mylog.Printf("发送文本报错信息失败: %v", err)
 							}
+						} else if err != nil && (strings.Contains(err.Error(), `"code":40034024`) || strings.Contains(err.Error(), `"err_code":40034024`)) {
+							// msg_id无效或越权(40034024): 清空 MsgID 重发
+							mylog.Printf("MsgID无效或越权（错误码40034024），尝试不使用MsgID重新发送")
+							groupMessage.MsgID = ""
+							resp, err = apiv2.PostGroupMessage(context.TODO(), message.Params.GroupID.(string), groupMessage)
+							if err != nil {
+								mylog.Printf("发送文本报错信息失败: %v", err)
+							}
 						} else if err != nil && strings.Contains(err.Error(), "context deadline exceeded") {
 							go postGroupMessageWithRetry(apiv2, message.Params.GroupID.(string), groupMessage)
 						}
@@ -676,6 +727,14 @@ func HandleSendGroupMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openap
 						echo.PushGlobalStack(pair)
 					} else if err != nil && strings.Contains(err.Error(), `"code":40034025`) {
 						groupMessage.EventID = ""
+						resp, err = apiv2.PostGroupMessage(context.TODO(), message.Params.GroupID.(string), groupMessage)
+						if err != nil {
+							mylog.Printf("发送图片失败: %v", err)
+						}
+					} else if err != nil && strings.Contains(err.Error(), `"code":40034024`) {
+						// msg_id无效或越权(40034024): 清空 MsgID 后以 event_id/主动方式重发, 避免消息静默丢失
+						mylog.Printf("MsgID无效或越权(错误码40034024)，尝试不使用MsgID重新发送")
+						groupMessage.MsgID = ""
 						resp, err = apiv2.PostGroupMessage(context.TODO(), message.Params.GroupID.(string), groupMessage)
 						if err != nil {
 							mylog.Printf("发送图片失败: %v", err)
