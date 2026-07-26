@@ -90,24 +90,20 @@ func resolveExplicitMessageID(messageID string) (string, error) {
 	return realID, nil
 }
 
-func normalizePlatformEventID(eventID string) string {
-	if index := strings.LastIndex(eventID, ":"); index >= 0 && index < len(eventID)-1 {
-		return eventID[index+1:]
-	}
-	return eventID
-}
-
 func resolveExplicitEventID(eventID string) string {
+	// 平台的被动回复要求 event_id 保持上报时的完整形态(如 "GROUP_MEMBER_ADD:uuid",
+	// 即 payload 外层 id), 剥掉类型前缀只发 uuid 会被判 40034025(event_id 无效),
+	// 因此这里各分支都原样返回, 不做任何裁剪
 	if eventID == "" || eventID == "0" || !isVirtualMessageID(eventID) {
-		return normalizePlatformEventID(eventID)
+		return eventID
 	}
 	if realID, ok := echo.GetCacheIDFromMemoryByRowID(eventID); ok {
-		return normalizePlatformEventID(realID)
+		return realID
 	}
 	// Legacy versions stored event IDs in the stable entity bucket. Keep old
 	// notices usable during migration without creating any new mapping.
 	if realID, err := idmap.RetrieveRowByIDv2(eventID); err == nil {
-		return normalizePlatformEventID(realID)
+		return realID
 	}
 	return eventID
 }
