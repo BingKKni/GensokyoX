@@ -112,6 +112,23 @@ func resolveExplicitEventID(eventID string) string {
 	return eventID
 }
 
+// 平台因 event_id 本身不可用而拒收的错误码:
+// 40034025/11255 为 event_id 无效, 40034026 为 event_id 已过期
+// (群聊 event_id 仅5分钟有效期, 单聊为60分钟)。
+// 这几种都应当清空 event_id 后转主动消息重发, 避免消息静默丢失。
+func isEventIDRejected(err error) bool {
+	if err == nil {
+		return false
+	}
+	errText := err.Error()
+	for _, code := range []string{"40034025", "40034026", "11255"} {
+		if strings.Contains(errText, `"code":`+code) || strings.Contains(errText, `"err_code":`+code) {
+			return true
+		}
+	}
+	return false
+}
+
 func HandleSendMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openapi.OpenAPI, message callapi.ActionMessage) (string, error) {
 	// 使用 message.Echo 作为key来获取消息类型
 	var msgType string

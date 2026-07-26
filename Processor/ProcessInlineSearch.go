@@ -289,8 +289,8 @@ func (p *Processors) ProcessInlineSearch(data *dto.WSInteractionData, originalRa
 			// 转换appid
 			AppIDString := strconv.FormatUint(p.Settings.AppID, 10)
 
-			// 储存和用户ID相关的eventid
-			echo.AddEvnetID(AppIDString, LongUserID64, data.EventID)
+			// 储存和用户ID相关的eventid（私聊有效期60分钟，与群聊的5分钟不同）
+			echo.AddEvnetIDC2C(AppIDString, LongUserID64, data.EventID)
 
 			// 上报事件
 			notice := &OnebotInteractionNotice{
