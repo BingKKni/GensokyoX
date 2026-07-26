@@ -13,6 +13,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -84,24 +85,7 @@ func InitializeDB() {
 }
 
 func DeleteBucket(bucketName string) {
-	// 清空指定的bucket
-	err := db.Update(func(tx *bbolt.Tx) error {
-		// 获取指定的bucket
-		bucket := tx.Bucket([]byte(bucketName))
-		if bucket == nil {
-			mylog.Printf(bucketName + "表不存在.")
-			return nil // 如果bucket不存在，直接返回nil
-		}
-
-		// 删除bucket中的所有键值对
-		err := bucket.ForEach(func(k, v []byte) error {
-			return bucket.Delete(k)
-		})
-		if err != nil {
-			return err
-		}
-		return nil
-	})
+	err := clearBucket(db, bucketName)
 
 	if err != nil {
 		log.Fatalf("Error clearing bucket %s: %v", bucketName, err)
@@ -110,26 +94,105 @@ func DeleteBucket(bucketName string) {
 	}
 }
 
-func CleanBucket(bucketName string) {
-	var deleteCount int
+func clearBucket(database *bbolt.DB, bucketName string) error {
+	return database.Update(func(tx *bbolt.Tx) error {
+		bucket := tx.Bucket([]byte(bucketName))
+		if bucket == nil {
+			return nil
+		}
 
-	err := db.Update(func(tx *bbolt.Tx) error {
+		// Message short IDs may still exist in application logs. Keep the
+		// counter monotonic so a cleared ID can never point at a new message.
+		var counter []byte
+		if bucketName == CacheBucketName {
+			counter = append([]byte(nil), bucket.Get([]byte(CounterKey))...)
+		}
+
+		if err := tx.DeleteBucket([]byte(bucketName)); err != nil {
+			return err
+		}
+		bucket, err := tx.CreateBucket([]byte(bucketName))
+		if err != nil {
+			return err
+		}
+		if len(counter) != 0 {
+			return bucket.Put([]byte(CounterKey), counter)
+		}
+		return nil
+	})
+}
+
+func CleanBucket(bucketName string) {
+	deleteCount, migratedCount, err := cleanBucket(db, bucketName)
+
+	if err != nil {
+		log.Fatalf("Failed to clean bucket %s: %v", bucketName, err)
+	}
+
+	log.Printf("Cleaned %d entries and remapped %d violate virtual IDs from bucket %s.", deleteCount, migratedCount, bucketName)
+}
+
+var temporaryEventIDPrefixes = [][]byte{
+	[]byte("GROUP_MEMBER_ADD:"),
+	[]byte("GROUP_MEMBER_REMOVE:"),
+}
+
+func isTemporaryEventID(id []byte) bool {
+	for _, prefix := range temporaryEventIDPrefixes {
+		if bytes.HasPrefix(id, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+type violateIDMapping struct {
+	id     []byte
+	oldRow uint64
+}
+
+func cleanBucket(database *bbolt.DB, bucketName string) (int, int, error) {
+	deleteCount := 0
+	migratedCount := 0
+	err := database.Update(func(tx *bbolt.Tx) error {
 		b := tx.Bucket([]byte(bucketName))
 		if b == nil {
 			return fmt.Errorf("bucket %s not found", bucketName)
 		}
 
-		// 使用游标遍历bucket 正向键 k:v 32位openid:大宽int64 64位msgid:大宽int6
+		// Derive the highest valid normal mapping before deleting anything.
+		// This repairs a missing/stale counter and prevents virtual ID reuse.
+		var highestRow uint64
+		if counter := b.Get([]byte(CounterKey)); counter != nil {
+			if len(counter) != 8 {
+				return fmt.Errorf("invalid %s counter length: %d", bucketName, len(counter))
+			}
+			highestRow = binary.BigEndian.Uint64(counter)
+		}
+
+		violateMappings := make([]violateIDMapping, 0)
 		c := b.Cursor()
 		for k, v := c.First(); k != nil; k, v = c.Next() {
-			// 检查键或值是否包含冒号
-			if bytes.Contains(k, []byte(":")) || bytes.Contains(v, []byte(":")) || bytes.Contains(k, []byte("row-")) {
-				continue // 忽略包含冒号的键值对
+			if bytes.Equal(k, []byte(CounterKey)) || bytes.HasPrefix(k, []byte("row-")) {
+				continue
 			}
-
-			// 检查值id的长度 这里是正向键
-			id := string(k)
-			if len(id) != 32 {
+			isTemporary := isTemporaryEventID(k)
+			if len(v) == 8 {
+				row := binary.BigEndian.Uint64(v)
+				reverseKey := []byte(fmt.Sprintf("row-%d", row))
+				if bytes.Equal(b.Get(reverseKey), k) {
+					if row > highestRow {
+						highestRow = row
+					}
+					if !isTemporary && row <= uint64(1<<63-1) && IsViolateID(int64(row)) {
+						violateMappings = append(violateMappings, violateIDMapping{
+							id:     append([]byte(nil), k...),
+							oldRow: row,
+						})
+					}
+				}
+			}
+			if isTemporary {
 				if err := c.Delete(); err != nil {
 					return err
 				}
@@ -137,31 +200,58 @@ func CleanBucket(bucketName string) {
 			}
 		}
 
-		// 再次遍历处理reverseKey的情况 反向键 row-整数:string 32位openid/64位msgid
+		for _, mapping := range violateMappings {
+			oldRowBytes := b.Get(mapping.id)
+			if len(oldRowBytes) != 8 || binary.BigEndian.Uint64(oldRowBytes) != mapping.oldRow {
+				continue
+			}
+			oldReverseKey := []byte(fmt.Sprintf("row-%d", mapping.oldRow))
+			if bytes.Equal(b.Get(oldReverseKey), mapping.id) {
+				if err := b.Delete(oldReverseKey); err != nil {
+					return err
+				}
+			}
+			if highestRow >= uint64(1<<63-1) {
+				return errors.New("idmap counter exhausted while remapping violate virtual IDs")
+			}
+			newRow, err := nextAvailableVirtualID(b, int64(highestRow)+1)
+			if err != nil {
+				return err
+			}
+			newRowBytes := make([]byte, 8)
+			binary.BigEndian.PutUint64(newRowBytes, uint64(newRow))
+			if err := b.Put(mapping.id, newRowBytes); err != nil {
+				return err
+			}
+			if err := b.Put([]byte(fmt.Sprintf("row-%d", newRow)), mapping.id); err != nil {
+				return err
+			}
+			highestRow = uint64(newRow)
+			migratedCount++
+		}
+
+		// Delete only reverse entries that are provably temporary or invalid.
+		// Length-based cleanup is unsafe because valid platform IDs are not a
+		// stable fixed width and Pro mappings share this bucket.
 		for k, v := c.First(); k != nil; k, v = c.Next() {
-			if strings.HasPrefix(string(k), "row-") {
-				if bytes.Contains(k, []byte(":")) || bytes.Contains(v, []byte(":")) {
-					continue // 忽略包含冒号的键值对
+			if bytes.HasPrefix(k, []byte("row-")) && (len(v) == 0 || isTemporaryEventID(v)) {
+				if err := c.Delete(); err != nil {
+					return err
 				}
-				// 这里检查反向键是否是32位
-				id := string(v)
-				if len(id) != 32 {
-					if err := b.Delete(k); err != nil {
-						return err
-					}
-					deleteCount++
-				}
+				deleteCount++
 			}
 		}
 
+		if !config.GetHashIDValue() || b.Get([]byte(CounterKey)) != nil {
+			counter := make([]byte, 8)
+			binary.BigEndian.PutUint64(counter, highestRow)
+			if err := b.Put([]byte(CounterKey), counter); err != nil {
+				return err
+			}
+		}
 		return nil
 	})
-
-	if err != nil {
-		log.Fatalf("Failed to clean bucket %s: %v", bucketName, err)
-	}
-
-	log.Printf("Cleaned %d entries from bucket %s.", deleteCount, bucketName)
+	return deleteCount, migratedCount, err
 }
 
 func CompactionIdmap() {
@@ -176,39 +266,48 @@ func CompactionIdmap() {
 
 // Compaction 创建一个新的数据库文件并复制现有的数据到这个新文件中
 func Compaction(sourceDBPath, targetDBPath string) error {
-	// 创建目标数据库文件
+	if db == nil {
+		return errors.New("database is not initialized")
+	}
+	if db.Path() != sourceDBPath {
+		return fmt.Errorf("opened database %q does not match source %q", db.Path(), sourceDBPath)
+	}
+	if _, err := os.Stat(targetDBPath); err == nil {
+		return fmt.Errorf("target database %q already exists", targetDBPath)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
 	targetDB, err := bbolt.Open(targetDBPath, 0600, &bbolt.Options{Timeout: 1 * time.Second})
 	if err != nil {
 		return err
 	}
-	defer targetDB.Close()
+	keepTarget := false
+	defer func() {
+		targetDB.Close()
+		if !keepTarget {
+			_ = os.Remove(targetDBPath)
+		}
+	}()
 
-	// 从源数据库复制数据到目标数据库
-	err = db.View(func(tx *bbolt.Tx) error {
-		return tx.ForEach(func(name []byte, b *bbolt.Bucket) error {
-			// 在目标数据库中创建相同的bucket
-			return targetDB.Update(func(tx2 *bbolt.Tx) error {
-				bucket, err := tx2.CreateBucketIfNotExists(name)
-				if err != nil {
-					return err
-				}
-				// 复制所有键值对
-				return b.ForEach(func(k, v []byte) error {
-					return bucket.Put(k, v)
-				})
-			})
-		})
-	})
-
-	if err != nil {
+	if err := bbolt.Compact(targetDB, db, 64*1024*1024); err != nil {
 		return err
 	}
-
-	// 确保所有操作都已完成
 	if err := targetDB.Sync(); err != nil {
 		return err
 	}
-
+	if err := targetDB.View(func(tx *bbolt.Tx) error {
+		var firstErr error
+		for checkErr := range tx.Check() {
+			if checkErr != nil && firstErr == nil {
+				firstErr = checkErr
+			}
+		}
+		return firstErr
+	}); err != nil {
+		return fmt.Errorf("validate compacted database: %w", err)
+	}
+	keepTarget = true
 	return nil
 }
 
@@ -275,6 +374,48 @@ func CheckValuev2(value int64) bool {
 	return isbinded
 }
 
+func retrieveStoredRow(bucketName, id string) (int64, bool, error) {
+	var row int64
+	found := false
+	err := db.View(func(tx *bbolt.Tx) error {
+		b := tx.Bucket([]byte(bucketName))
+		if b == nil {
+			return fmt.Errorf("bucket %s not found", bucketName)
+		}
+		value := b.Get([]byte(id))
+		if value == nil {
+			return nil
+		}
+		if len(value) != 8 {
+			return fmt.Errorf("invalid mapping value for %q in %s", id, bucketName)
+		}
+		row = int64(binary.BigEndian.Uint64(value))
+		found = true
+		return nil
+	})
+	return row, found, err
+}
+
+func validateMappingID(id string) error {
+	if id == CounterKey || strings.HasPrefix(id, "row-") {
+		return fmt.Errorf("ID %q uses a reserved idmap key", id)
+	}
+	return nil
+}
+
+func nextAvailableVirtualID(bucket *bbolt.Bucket, candidate int64) (int64, error) {
+	for {
+		if candidate <= 0 || candidate == int64(1<<63-1) {
+			return 0, errors.New("idmap counter exhausted")
+		}
+		reverseKey := []byte(fmt.Sprintf("row-%d", candidate))
+		if !IsViolateID(candidate) && bucket.Get(reverseKey) == nil {
+			return candidate, nil
+		}
+		candidate++
+	}
+}
+
 // 根据a储存b
 func StoreID(id string) (int64, error) {
 	// 空ID直接返回0: bbolt不允许空key, 正向映射永远存不进去,
@@ -283,17 +424,41 @@ func StoreID(id string) (int64, error) {
 	if id == "" {
 		return 0, nil
 	}
+	if err := validateMappingID(id); err != nil {
+		return 0, err
+	}
+	if row, found, err := retrieveStoredRow(BucketName, id); err != nil {
+		return 0, err
+	} else if found && !IsViolateID(row) {
+		return row, nil
+	}
 
 	var newRow int64
+	var remappedFrom int64
 
 	err := db.Update(func(tx *bbolt.Tx) error {
 		b := tx.Bucket([]byte(BucketName))
+		if b == nil {
+			return fmt.Errorf("bucket %s not found", BucketName)
+		}
 
-		// 检查ID是否已经存在
+		// A concurrent writer may have inserted it after the read-only fast path.
 		existingRowBytes := b.Get([]byte(id))
 		if existingRowBytes != nil {
+			if len(existingRowBytes) != 8 {
+				return fmt.Errorf("invalid mapping value for %q in %s", id, BucketName)
+			}
 			newRow = int64(binary.BigEndian.Uint64(existingRowBytes))
-			return nil
+			if !IsViolateID(newRow) {
+				return nil
+			}
+			remappedFrom = newRow
+			oldReverseKey := []byte(fmt.Sprintf("row-%d", newRow))
+			if bytes.Equal(b.Get(oldReverseKey), []byte(id)) {
+				if err := b.Delete(oldReverseKey); err != nil {
+					return err
+				}
+			}
 		}
 		//写入虚拟值
 		if !config.GetHashIDValue() {
@@ -302,8 +467,21 @@ func StoreID(id string) (int64, error) {
 			if currentRowBytes == nil {
 				newRow = 1
 			} else {
+				if len(currentRowBytes) != 8 {
+					return fmt.Errorf("invalid %s counter length: %d", BucketName, len(currentRowBytes))
+				}
 				currentRow := binary.BigEndian.Uint64(currentRowBytes)
+				if currentRow >= uint64(1<<63-1) {
+					return errors.New("idmap counter exhausted")
+				}
 				newRow = int64(currentRow) + 1
+			}
+			// Never allocate a violate virtual ID or overwrite an existing reverse
+			// mapping, even if a legacy cleanup lowered currentRow.
+			var err error
+			newRow, err = nextAvailableVirtualID(b, newRow)
+			if err != nil {
+				return err
 			}
 		} else {
 			// 生成新的行号
@@ -313,6 +491,13 @@ func StoreID(id string) (int64, error) {
 				newRow, err = GenerateRowID(id, digits)
 				if err != nil {
 					return err
+				}
+				if IsViolateID(newRow) {
+					newRow, err = nextAvailableVirtualID(b, newRow)
+					if err != nil {
+						return err
+					}
+					break
 				}
 				// 检查新生成的行号是否重复
 				rowKey := fmt.Sprintf("row-%d", newRow)
@@ -331,30 +516,57 @@ func StoreID(id string) (int64, error) {
 		binary.BigEndian.PutUint64(rowBytes, uint64(newRow))
 		//写入递增值
 		if !config.GetHashIDValue() {
-			b.Put([]byte(CounterKey), rowBytes)
+			if err := b.Put([]byte(CounterKey), rowBytes); err != nil {
+				return err
+			}
 		}
 		//真实对应虚拟 用来直接判断是否存在,并快速返回
-		b.Put([]byte(id), rowBytes)
+		if err := b.Put([]byte(id), rowBytes); err != nil {
+			return err
+		}
 
 		reverseKey := fmt.Sprintf("row-%d", newRow)
-		b.Put([]byte(reverseKey), []byte(id))
+		if err := b.Put([]byte(reverseKey), []byte(id)); err != nil {
+			return err
+		}
 
 		return nil
 	})
 
+	if err == nil && remappedFrom != 0 {
+		mylog.Printf("已将违规虚拟ID[%d]重新映射为[%d]", remappedFrom, newRow)
+	}
 	return newRow, err
 }
 
 // 根据a储存b
 func StoreCache(id string) (int64, error) {
+	if id == "" {
+		return 0, nil
+	}
+	if err := validateMappingID(id); err != nil {
+		return 0, err
+	}
+	if row, found, err := retrieveStoredRow(CacheBucketName, id); err != nil {
+		return 0, err
+	} else if found {
+		return row, nil
+	}
+
 	var newRow int64
 
 	err := db.Update(func(tx *bbolt.Tx) error {
 		b := tx.Bucket([]byte(CacheBucketName))
+		if b == nil {
+			return fmt.Errorf("bucket %s not found", CacheBucketName)
+		}
 
-		// 检查ID是否已经存在
+		// A concurrent writer may have inserted it after the read-only fast path.
 		existingRowBytes := b.Get([]byte(id))
 		if existingRowBytes != nil {
+			if len(existingRowBytes) != 8 {
+				return fmt.Errorf("invalid mapping value for %q in %s", id, CacheBucketName)
+			}
 			newRow = int64(binary.BigEndian.Uint64(existingRowBytes))
 			return nil
 		}
@@ -365,8 +577,20 @@ func StoreCache(id string) (int64, error) {
 			if currentRowBytes == nil {
 				newRow = 1
 			} else {
+				if len(currentRowBytes) != 8 {
+					return fmt.Errorf("invalid %s counter length: %d", CacheBucketName, len(currentRowBytes))
+				}
 				currentRow := binary.BigEndian.Uint64(currentRowBytes)
+				if currentRow >= uint64(1<<63-1) {
+					return errors.New("message cache counter exhausted")
+				}
 				newRow = int64(currentRow) + 1
+			}
+			for b.Get([]byte(fmt.Sprintf("row-%d", newRow))) != nil {
+				if newRow == int64(1<<63-1) {
+					return errors.New("message cache counter exhausted")
+				}
+				newRow++
 			}
 		} else {
 			// 生成新的行号
@@ -394,13 +618,19 @@ func StoreCache(id string) (int64, error) {
 		binary.BigEndian.PutUint64(rowBytes, uint64(newRow))
 		//写入递增值
 		if !config.GetHashIDValue() {
-			b.Put([]byte(CounterKey), rowBytes)
+			if err := b.Put([]byte(CounterKey), rowBytes); err != nil {
+				return err
+			}
 		}
 		//真实对应虚拟 用来直接判断是否存在,并快速返回
-		b.Put([]byte(id), rowBytes)
+		if err := b.Put([]byte(id), rowBytes); err != nil {
+			return err
+		}
 
 		reverseKey := fmt.Sprintf("row-%d", newRow)
-		b.Put([]byte(reverseKey), []byte(id))
+		if err := b.Put([]byte(reverseKey), []byte(id)); err != nil {
+			return err
+		}
 
 		return nil
 	})
@@ -718,7 +948,16 @@ func RetrieveRowByID(rowid string) (string, error) {
 
 		return nil
 	})
-
+	if err == nil {
+		row, parseErr := strconv.ParseInt(rowid, 10, 64)
+		if parseErr == nil && IsViolateID(row) {
+			// 重映射只是顺带的自愈动作。即使失败，本次查询到的 id 依然有效，
+			// 应记录告警并返回原值，而不是让调用方误判为查不到。
+			if _, remapErr := StoreID(id); remapErr != nil {
+				mylog.Printf("重映射违规虚拟ID[%s]失败，返回原始真实值: %v", rowid, remapErr)
+			}
+		}
+	}
 	return id, err
 }
 
@@ -924,6 +1163,22 @@ func RetrieveRowByCachev2(rowid string) (string, error) {
 
 // 根据a 以b为类别 储存c
 func WriteConfig(sectionName, keyName, value string) error {
+	key := joinSectionAndKey(sectionName, keyName)
+	unchanged := false
+	if err := db.View(func(tx *bbolt.Tx) error {
+		b := tx.Bucket([]byte(ConfigBucket))
+		if b == nil {
+			return fmt.Errorf("bucket %s not found", ConfigBucket)
+		}
+		unchanged = bytes.Equal(b.Get(key), []byte(value))
+		return nil
+	}); err != nil {
+		return err
+	}
+	if unchanged {
+		return nil
+	}
+
 	return db.Update(func(tx *bbolt.Tx) error {
 		b := tx.Bucket([]byte(ConfigBucket)) // 直接获取bucket
 		if b == nil {
@@ -931,7 +1186,9 @@ func WriteConfig(sectionName, keyName, value string) error {
 			return fmt.Errorf("bucket %s not found", ConfigBucket)
 		}
 
-		key := joinSectionAndKey(sectionName, keyName)
+		if bytes.Equal(b.Get(key), []byte(value)) {
+			return nil
+		}
 		err := b.Put(key, []byte(value))
 		if err != nil {
 			mylog.Printf("Error putting data into bucket with key %s: %v", key, err)
@@ -1145,6 +1402,9 @@ func joinSectionAndKey(sectionName, keyName string) []byte {
 
 // UpdateVirtualValue 更新旧的虚拟值到新的虚拟值的映射
 func UpdateVirtualValue(oldRowValue, newRowValue int64) error {
+	if IsViolateID(newRowValue) {
+		return fmt.Errorf("虚拟ID %d 包含违规数字", newRowValue)
+	}
 	return db.Update(func(tx *bbolt.Tx) error {
 		b := tx.Bucket([]byte(BucketName))
 
@@ -1201,6 +1461,13 @@ func RetrieveRealValue(virtualValue int64) (string, string, error) {
 	if err != nil {
 		return "", "", err
 	}
+	if IsViolateID(virtualValue) {
+		newVirtualValue, remapErr := StoreID(realValue)
+		if remapErr != nil {
+			return "", "", remapErr
+		}
+		virtualValue = newVirtualValue
+	}
 
 	// 返回虚拟值和对应的真实值
 	return fmt.Sprintf("%d", virtualValue), realValue, nil
@@ -1224,6 +1491,12 @@ func RetrieveVirtualValue(realValue string) (string, string, error) {
 
 	if err != nil {
 		return "", "", err
+	}
+	if IsViolateID(virtualValue) {
+		virtualValue, err = StoreID(realValue)
+		if err != nil {
+			return "", "", err
+		}
 	}
 
 	// 返回真实值和对应的虚拟值

@@ -174,7 +174,7 @@ func HandleSendPrivateMsg(client callapi.Client, api openapi.OpenAPI, apiv2 open
 		// 使用 echo 获取消息ID
 		var messageID string
 		// EventID
-		var eventID string
+		eventID := paramString(message.Params.EventID)
 		// is_wakeup 字段
 		isWakeup := message.Params.IsWakeup
 
@@ -195,10 +195,12 @@ func HandleSendPrivateMsg(client callapi.Client, api openapi.OpenAPI, apiv2 open
 		if messageID == "2000" {
 			messageID = ""
 			mylog.Println("通过lazymsgid发送群私聊主动信息,每月可发送1次")
-			if len(message.Params.UserID.(string)) != 32 {
-				eventID = GetEventIDByUseridOrGroupid(config.GetAppIDStr(), message.Params.UserID)
-			} else {
-				eventID = GetEventIDByUseridOrGroupidv2(config.GetAppIDStr(), message.Params.UserID)
+			if eventID == "" {
+				if len(paramString(message.Params.UserID)) != 32 {
+					eventID = GetEventIDByUseridOrGroupid(config.GetAppIDStr(), message.Params.UserID)
+				} else {
+					eventID = GetEventIDByUseridOrGroupidv2(config.GetAppIDStr(), message.Params.UserID)
+				}
 			}
 		}
 
@@ -209,18 +211,25 @@ func HandleSendPrivateMsg(client callapi.Client, api openapi.OpenAPI, apiv2 open
 			eventID = ""
 		}
 
-		// 调用方显式指定 message_id == "0" 时，强制以主动消息方式发送（不附带 msg_id）
-		// 若已有可用 event_id 仍会附带，行为与 lazy_message_id == "2000" 一致
-		if mid, ok := message.Params.MessageID.(string); ok && mid == "0" {
-			messageID = ""
-			if eventID == "" {
-				if len(message.Params.UserID.(string)) != 32 {
-					eventID = GetEventIDByUseridOrGroupid(config.GetAppIDStr(), message.Params.UserID)
-				} else {
-					eventID = GetEventIDByUseridOrGroupidv2(config.GetAppIDStr(), message.Params.UserID)
+		// An explicit message_id always wins over process-global lazy context.
+		if mid := paramString(message.Params.MessageID); mid != "" {
+			if mid == "0" {
+				messageID = ""
+				if eventID == "" {
+					if len(paramString(message.Params.UserID)) != 32 {
+						eventID = GetEventIDByUseridOrGroupid(config.GetAppIDStr(), message.Params.UserID)
+					} else {
+						eventID = GetEventIDByUseridOrGroupidv2(config.GetAppIDStr(), message.Params.UserID)
+					}
+				}
+			} else {
+				messageID, err = resolveExplicitMessageID(mid)
+				if err != nil {
+					return "", err
 				}
 			}
 		}
+		eventID = resolveExplicitEventID(eventID)
 
 		//开发环境用 私聊不可用1000
 		// if config.GetDevMsgID() {

@@ -31,9 +31,9 @@ func (p *Processors) processGroupMemberChange(data *dto.GroupMemberEvent, origin
 	appIDString := strconv.FormatUint(p.Settings.AppID, 10)
 
 	if data.EventID != "" {
-		eventID64, err = idmap.StoreIDv2(data.EventID)
+		eventID64, err = echo.StoreCacheInMemory(data.EventID)
 		if err != nil {
-			mylog.Errorf("Error storing group member event ID: %v", err)
+			mylog.Errorf("Error caching group member event ID: %v", err)
 		}
 	}
 
@@ -94,7 +94,7 @@ func (p *Processors) processGroupMemberChange(data *dto.GroupMemberEvent, origin
 	noticeMap := structToMap(notice)
 	go p.BroadcastMessageToAll(noticeMap, p.Apiv2, data)
 
-	mylog.Printf("群成员变更事件[%v] group[%v] user[%v] event[%v]", noticeType, groupID64, userID64, eventID64)
+	mylog.Printf("群成员变更事件[%v] group[%v] user[%v] event_set[%v]", noticeType, groupID64, userID64, data.EventID != "")
 	if groupID64 != 0 {
 		idmap.WriteConfigv2(fmt.Sprint(groupID64), "type", "group")
 	}

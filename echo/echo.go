@@ -12,52 +12,70 @@ import (
 	"github.com/tencent-connect/botgo/dto"
 )
 
+const (
+	// 私信环境下平台 msg_id 有效期为1小时，统一取60分钟以覆盖该上限；
+	// 大多数 event_id/msg_id 实际5分钟即过期，多保留一会无副作用。
+	echoMappingTTL    = 60 * time.Minute
+	messageIDCacheTTL = 60 * time.Minute
+)
+
+type expiringString struct {
+	value     string
+	expiresAt time.Time
+}
+
+type memoryMessageIDEntry struct {
+	id        string
+	expiresAt time.Time
+}
+
+type memoryMessageIDCache struct {
+	mu    sync.Mutex
+	byID  map[string]int64
+	byRow map[int64]memoryMessageIDEntry
+}
+
 func init() {
 	// 在 init 函数中运行清理逻辑
 	startCleanupRoutine()
 }
 
 func startCleanupRoutine() {
-	cleanupTicker = time.NewTicker(30 * time.Minute)
+	ticker := time.NewTicker(30 * time.Minute)
+	echoCleanupTicker = ticker
 	go func() {
-		for {
-			<-cleanupTicker.C
+		for range ticker.C {
 			cleanupGlobalMaps()
 		}
 	}()
 }
 
 func cleanupGlobalMaps() {
-	cleanupSyncMap(&globalSyncMapMsgid)
-	cleanupSyncMap(&globalReverseMapMsgid)
 	cleanupMessageGroupStack(globalMessageGroupStack)
 	cleanupEchoMapping(globalEchoMapping)
 	cleanupInt64ToIntMapping(globalInt64ToIntMapping)
 	cleanupStringToIntMappingSeq(globalStringToIntMappingSeq)
 }
 
-func cleanupSyncMap(m *sync.Map) {
-	m.Range(func(key, value interface{}) bool {
-		m.Delete(key)
-		return true
-	})
-}
-
 func cleanupMessageGroupStack(stack *globalMessageGroup) {
+	stack.mu.Lock()
+	defer stack.mu.Unlock()
 	stack.stack = make([]MessageGroupPair, 0)
 }
 
 func cleanupEchoMapping(mapping *EchoMapping) {
-	mapping.msgTypeMapping.Range(func(key, value interface{}) bool {
-		mapping.msgTypeMapping.Delete(key)
-		return true
-	})
-	mapping.msgIDMapping.Range(func(key, value interface{}) bool {
-		mapping.msgIDMapping.Delete(key)
-		return true
-	})
-	mapping.eventIDMapping.Range(func(key, value interface{}) bool {
-		mapping.eventIDMapping.Delete(key)
+	now := time.Now()
+	cleanupExpiredStrings(&mapping.msgTypeMapping, now)
+	cleanupExpiredStrings(&mapping.msgIDMapping, now)
+	cleanupExpiredStrings(&mapping.eventIDMapping, now)
+}
+
+func cleanupExpiredStrings(mapping *sync.Map, now time.Time) {
+	mapping.Range(func(key, value interface{}) bool {
+		entry, ok := value.(expiringString)
+		if !ok || !entry.expiresAt.After(now) {
+			mapping.Delete(key)
+		}
 		return true
 	})
 }
@@ -104,13 +122,16 @@ type globalMessageGroup struct {
 	stack []MessageGroupPair
 }
 
-// 使用 sync.Map 作为内存存储
 var (
-	globalSyncMapMsgid    sync.Map
-	globalReverseMapMsgid sync.Map // 用于存储反向键值对
-	cleanupTicker         *time.Ticker
-	onceMsgid             sync.Once
+	echoCleanupTicker      *time.Ticker
+	messageIDCleanupTicker *time.Ticker
+	onceMsgid              sync.Once
 )
+
+var globalMemoryMessageIDs = &memoryMessageIDCache{
+	byID:  make(map[string]int64),
+	byRow: make(map[int64]memoryMessageIDEntry),
+}
 
 // 初始化一个全局栈实例
 var globalMessageGroupStack = &globalMessageGroup{
@@ -151,77 +172,81 @@ func (e *EchoMapping) GenerateKeyv3(appid string, s string) string {
 	return appid + "_" + s
 }
 
+func storeExpiringString(mapping *sync.Map, key, value string) {
+	mapping.Store(key, expiringString{
+		value:     value,
+		expiresAt: time.Now().Add(echoMappingTTL),
+	})
+}
+
+func loadExpiringString(mapping *sync.Map, key string) string {
+	value, ok := mapping.Load(key)
+	if !ok {
+		return ""
+	}
+	entry, ok := value.(expiringString)
+	if !ok || !entry.expiresAt.After(time.Now()) {
+		mapping.Delete(key)
+		return ""
+	}
+	return entry.value
+}
+
 // 添加 echo 对应的类型
 func AddMsgType(appid string, s int64, msgType string) {
 	key := globalEchoMapping.GenerateKey(appid, s)
-	globalEchoMapping.msgTypeMapping.Store(key, msgType)
+	storeExpiringString(&globalEchoMapping.msgTypeMapping, key, msgType)
 }
 
 // 添加echo对应的messageid
 func AddMsgIDv3(appid string, s string, msgID string) {
 	key := globalEchoMapping.GenerateKeyv3(appid, s)
-	globalEchoMapping.msgIDMapping.Store(key, msgID)
+	storeExpiringString(&globalEchoMapping.msgIDMapping, key, msgID)
 }
 
 // GetMsgIDv3 返回给定appid和s的msgID
 func GetMsgIDv3(appid string, s string) string {
 	key := globalEchoMapping.GenerateKeyv3(appid, s)
-	value, ok := globalEchoMapping.msgIDMapping.Load(key)
-	if !ok {
-		return "" // 或者根据需要返回默认值或者错误处理
-	}
-	return value.(string)
+	return loadExpiringString(&globalEchoMapping.msgIDMapping, key)
 }
 
 // 添加group和userid对应的messageid
 func AddMsgIDv2(appid string, groupid int64, userid int64, msgID string) {
 	key := globalEchoMapping.GenerateKeyv2(appid, groupid, userid)
-	globalEchoMapping.msgIDMapping.Store(key, msgID)
+	storeExpiringString(&globalEchoMapping.msgIDMapping, key, msgID)
 }
 
 // 添加group对应的eventid
 func AddEvnetID(appid string, groupid int64, eventID string) {
 	key := globalEchoMapping.GenerateKeyEventID(appid, groupid)
-	globalEchoMapping.eventIDMapping.Store(key, eventID)
+	storeExpiringString(&globalEchoMapping.eventIDMapping, key, eventID)
 }
 
 // 添加group对应的eventid
 func AddEvnetIDv2(appid string, groupid string, eventID string) {
 	key := globalEchoMapping.GenerateKeyEventIDV2(appid, groupid)
-	globalEchoMapping.eventIDMapping.Store(key, eventID)
+	storeExpiringString(&globalEchoMapping.eventIDMapping, key, eventID)
 }
 
 // 添加echo对应的messageid
 func AddMsgID(appid string, s int64, msgID string) {
 	key := globalEchoMapping.GenerateKey(appid, s)
-	globalEchoMapping.msgIDMapping.Store(key, msgID)
+	storeExpiringString(&globalEchoMapping.msgIDMapping, key, msgID)
 }
 
 // 根据给定的key获取消息类型
 func GetMsgTypeByKey(key string) string {
-	value, _ := globalEchoMapping.msgTypeMapping.Load(key)
-	if value == nil {
-		return "" // 根据需要返回默认值或者进行错误处理
-	}
-	return value.(string)
+	return loadExpiringString(&globalEchoMapping.msgTypeMapping, key)
 }
 
 // 根据给定的key获取消息ID
 func GetMsgIDByKey(key string) string {
-	value, _ := globalEchoMapping.msgIDMapping.Load(key)
-	if value == nil {
-		return "" // 根据需要返回默认值或者进行错误处理
-	}
-	return value.(string)
+	return loadExpiringString(&globalEchoMapping.msgIDMapping, key)
 }
 
 // 根据给定的key获取EventID
 func GetEventIDByKey(key string) string {
-	value, _ := globalEchoMapping.eventIDMapping.Load(key)
-	if value == nil {
-		return "" // 根据需要返回默认值或者进行错误处理
-	}
-	return value.(string)
+	return loadExpiringString(&globalEchoMapping.eventIDMapping, key)
 }
 
 // AddMapping 添加一个新的映射
@@ -291,74 +316,98 @@ func RemoveFromGlobalStack(index int) {
 	globalMessageGroupStack.stack = append(globalMessageGroupStack.stack[:index], globalMessageGroupStack.stack[index+1:]...)
 }
 
-// StoreCacheInMemory 根据 ID 将映射存储在内存中的 sync.Map 中
+// StoreCacheInMemory stores a bounded, bidirectional message-ID mapping.
 func StoreCacheInMemory(id string) (int64, error) {
-	var newRow int64
-
-	// 检查是否已存在映射
-	if value, ok := globalSyncMapMsgid.Load(id); ok {
-		newRow = value.(int64)
-		return newRow, nil
+	if id == "" {
+		return 0, fmt.Errorf("message ID is empty")
 	}
 
-	// 生成新的行号
-	var err error
+	now := time.Now()
+	globalMemoryMessageIDs.mu.Lock()
+	defer globalMemoryMessageIDs.mu.Unlock()
+
+	if row, ok := globalMemoryMessageIDs.byID[id]; ok {
+		if entry, exists := globalMemoryMessageIDs.byRow[row]; exists && entry.id == id && entry.expiresAt.After(now) {
+			return row, nil
+		}
+		delete(globalMemoryMessageIDs.byID, id)
+		delete(globalMemoryMessageIDs.byRow, row)
+	}
+
 	maxDigits := 18 // int64 的位数上限-1
 	for digits := 9; digits <= maxDigits; digits++ {
-		newRow, err = idmap.GenerateRowID(id, digits)
+		newRow, err := idmap.GenerateRowID(id, digits)
 		if err != nil {
 			return 0, err
 		}
-
-		// 检查新生成的行号是否重复
-		if _, exists := globalSyncMapMsgid.LoadOrStore(id, newRow); !exists {
-			// 存储反向键值对
-			globalReverseMapMsgid.Store(newRow, id)
-			// 找到了一个唯一的行号，可以跳出循环
-			break
+		if newRow <= 0 {
+			continue
+		}
+		if existing, exists := globalMemoryMessageIDs.byRow[newRow]; exists {
+			if existing.expiresAt.After(now) {
+				continue
+			}
+			delete(globalMemoryMessageIDs.byID, existing.id)
+			delete(globalMemoryMessageIDs.byRow, newRow)
 		}
 
-		// 如果到达了最大尝试次数还没有找到唯一的行号，则返回错误
-		if digits == maxDigits {
-			return 0, fmt.Errorf("unable to find a unique row ID after %d attempts", maxDigits-8)
+		globalMemoryMessageIDs.byID[id] = newRow
+		globalMemoryMessageIDs.byRow[newRow] = memoryMessageIDEntry{
+			id:        id,
+			expiresAt: now.Add(messageIDCacheTTL),
 		}
+		return newRow, nil
 	}
-
-	return newRow, nil
+	return 0, fmt.Errorf("unable to find a unique row ID after %d attempts", maxDigits-8)
 }
 
 // GetIDFromRowID 根据行号获取原始 ID
 func GetCacheIDFromMemoryByRowID(rowID string) (string, bool) {
-	introwID, _ := strconv.ParseInt(rowID, 10, 64)
-	if value, ok := globalReverseMapMsgid.Load(introwID); ok {
-		return value.(string), true
+	introwID, err := strconv.ParseInt(rowID, 10, 64)
+	if err != nil {
+		return "", false
 	}
-	return "", false
+
+	now := time.Now()
+	globalMemoryMessageIDs.mu.Lock()
+	defer globalMemoryMessageIDs.mu.Unlock()
+	entry, ok := globalMemoryMessageIDs.byRow[introwID]
+	if !ok {
+		return "", false
+	}
+	if !entry.expiresAt.After(now) {
+		delete(globalMemoryMessageIDs.byRow, introwID)
+		if globalMemoryMessageIDs.byID[entry.id] == introwID {
+			delete(globalMemoryMessageIDs.byID, entry.id)
+		}
+		return "", false
+	}
+	return entry.id, true
 }
 
-// StartCleanupRoutine 启动定时清理函数，每5分钟清空 globalSyncMapMsgid 和 globalReverseMapMsgid
+func cleanupMemoryMessageIDs(now time.Time) {
+	globalMemoryMessageIDs.mu.Lock()
+	defer globalMemoryMessageIDs.mu.Unlock()
+	for row, entry := range globalMemoryMessageIDs.byRow {
+		if entry.expiresAt.After(now) {
+			continue
+		}
+		delete(globalMemoryMessageIDs.byRow, row)
+		if globalMemoryMessageIDs.byID[entry.id] == row {
+			delete(globalMemoryMessageIDs.byID, entry.id)
+		}
+	}
+}
+
+// StartCleanupRoutine periodically removes expired message-ID mappings.
 func StartCleanupRoutine() {
 	onceMsgid.Do(func() {
-		cleanupTicker = time.NewTicker(5 * time.Minute)
+		ticker := time.NewTicker(5 * time.Minute)
+		messageIDCleanupTicker = ticker
 
-		// 启动一个协程执行清理操作
 		go func() {
-			for range cleanupTicker.C {
-				fmt.Println("Starting cleanup...")
-
-				// 清空 sync.Map
-				globalSyncMapMsgid.Range(func(key, value interface{}) bool {
-					globalSyncMapMsgid.Delete(key)
-					return true
-				})
-
-				// 清空反向映射 sync.Map
-				globalReverseMapMsgid.Range(func(key, value interface{}) bool {
-					globalReverseMapMsgid.Delete(key)
-					return true
-				})
-
-				fmt.Println("Cleanup completed.")
+			for now := range ticker.C {
+				cleanupMemoryMessageIDs(now)
 			}
 		}()
 	})
@@ -366,7 +415,7 @@ func StartCleanupRoutine() {
 
 // StopCleanupRoutine 停止定时清理函数
 func StopCleanupRoutine() {
-	if cleanupTicker != nil {
-		cleanupTicker.Stop()
+	if messageIDCleanupTicker != nil {
+		messageIDCleanupTicker.Stop()
 	}
 }

@@ -257,6 +257,7 @@ func handleSendPrivateMessage(c *gin.Context, api openapi.OpenAPI, apiV2 openapi
 		AutoEscape     bool   `json:"auto_escape" form:"auto_escape"`
 		IsWakeup       bool   `json:"is_wakeup" form:"is_wakeup"`
 		MessageID      string `json:"message_id,omitempty" form:"message_id"`
+		EventID        string `json:"event_id,omitempty" form:"event_id"`
 		ReplyMessageID string `json:"reply_message_id,omitempty" form:"reply_message_id"`
 	}
 
@@ -292,6 +293,9 @@ func handleSendPrivateMessage(c *gin.Context, api openapi.OpenAPI, apiV2 openapi
 	// 显式指定 message_id 时透传，下游会识别 "0" 走强制主动消息逻辑
 	if req.MessageID != "" {
 		message.Params.MessageID = req.MessageID
+	}
+	if req.EventID != "" {
+		message.Params.EventID = req.EventID
 	}
 	// 引用回复：透传 reply_message_id
 	if req.ReplyMessageID != "" {

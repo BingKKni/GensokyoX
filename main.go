@@ -53,10 +53,10 @@ func main() {
 	// 定义faststart命令行标志。默认为false。
 	fastStart := flag.Bool("faststart", false, "start without initialization if set")
 	tidy := flag.Bool("tidy", false, "backup and tidy your config.yml")
-	cleanids := flag.Bool("clean_ids", false, "clean msg_id in ids bucket.")
+	cleanids := flag.Bool("clean_ids", false, "remove temporary event IDs and remap violate virtual IDs without changing normal mappings")
 	delids := flag.Bool("del_ids", false, "delete ids bucket, must backup idmap.db first!")
-	delcache := flag.Bool("del_cache", false, "delete cache bucket, it is safe")
-	compaction := flag.Bool("compaction", false, "compaction for apply db changes.")
+	delcache := flag.Bool("del_cache", false, "delete temporary message mappings while preserving the monotonic counter")
+	compaction := flag.Bool("compaction", false, "write a compacted copy to a new idmap_compacted.db")
 	m := flag.Bool("m", false, "Maintenance mode")
 
 	// 解析命令行参数到定义的标志。
@@ -223,7 +223,7 @@ func main() {
 				return
 			}
 			if *cleanids {
-				mylog.Printf("开始清理ids中的msg_id\n")
+				mylog.Printf("开始清理ids中的临时event_id\n")
 				idmap.CleanBucket("ids")
 				mylog.Printf("ids清理完成\n")
 				return
@@ -590,9 +590,10 @@ func main() {
 	// }()
 
 	//杂七杂八的地方
-	if conf.Settings.MemoryMsgid {
-		echo.StartCleanupRoutine()
+	if !conf.Settings.MemoryMsgid {
+		mylog.Printf("警告：memory_msgid=false 会将每个消息ID永久写入idmap.db；高流量机器人应改为true")
 	}
+	echo.StartCleanupRoutine()
 
 	// 使用color库输出天蓝色的文本
 	cyan := color.New(color.FgCyan)
@@ -616,9 +617,7 @@ func main() {
 	}
 
 	// 停止内存清理线程
-	if conf.Settings.MemoryMsgid {
-		echo.StopCleanupRoutine()
-	}
+	echo.StopCleanupRoutine()
 
 	// 关闭BoltDB数据库
 	url.CloseDB()

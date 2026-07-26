@@ -113,7 +113,7 @@ settings:
   send_error : true                 #将报错用文本发出,避免机器人被审核报无响应
   save_error : false                #将保存保存在log文件夹,方便开发者定位发送错误.
   downtime_message : "我正在维护中~请不要担心,维护结束就回来~维护时间:(1小时)"
-  memory_msgid : false              #当你的机器人单日信息量超过100万,就需要高性能SSD或者开启这个选项了.部分依赖msgid的功能可能会受影响(如delete_msg)
+  memory_msgid : true               #推荐保持true: msg_id仅在内存保留30分钟,避免idmap.db无限增长.设为false会永久落盘,仅适合确需跨重启反查短消息ID的低流量机器人.
   threads_ret_msg : false           #异步,并发发送回执信息 仅ws可用.
   no_ret_msg : false                #当你的信息量达到1000万/天的时候,并且你的业务不需要获取回调信息,此时直接屏蔽是最好的选择,可以提升50%收发性能. 需应用端适配!!!
 

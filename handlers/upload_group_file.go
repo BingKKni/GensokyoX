@@ -260,16 +260,19 @@ func buildUploadResponse(
 	response.Data.TTL = ttl
 
 	if isGroup {
-		if config.GetIdmapPro() && message.Params.UserID != nil {
-			uid, _ := message.Params.UserID.(string)
-			gid64, _, _ := idmap.StoreIDv2Pro(targetID, uid)
-			response.GroupID = gid64
+		var gid64 int64
+		if uid, ok := message.Params.UserID.(string); config.GetIdmapPro() && ok && uid != "" {
+			var err error
+			gid64, _, err = resolveEchoVirtualIDPair(targetID, uid)
+			if err != nil {
+				gid64, _ = resolveEchoVirtualIDInt64(targetID)
+			}
 		} else {
-			gid64, _ := idmap.StoreIDv2(targetID)
-			response.GroupID = gid64
+			gid64, _ = resolveEchoVirtualIDInt64(targetID)
 		}
+		response.GroupID = gid64
 	} else {
-		uid64, _ := idmap.StoreIDv2(targetID)
+		uid64, _ := resolveEchoVirtualIDInt64(targetID)
 		response.UserID = uid64
 	}
 

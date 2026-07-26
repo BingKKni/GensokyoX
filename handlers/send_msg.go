@@ -3,6 +3,7 @@ package handlers
 import (
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/hoshinonyaruko/gensokyo/callapi"
@@ -15,6 +16,100 @@ import (
 
 func init() {
 	callapi.RegisterHandler("send_msg", HandleSendMsg)
+}
+
+// resolveEchoVirtualID resolves an already-known real ID without creating a
+// mapping. Numeric values from OneBot applications are virtual IDs and must
+// never be fed back into StoreID, which would consume another virtual ID.
+func resolveEchoVirtualID(id string) string {
+	if id == "" {
+		return ""
+	}
+	if row, err := strconv.ParseInt(id, 10, 64); err == nil {
+		if realID, err := idmap.RetrieveRowByIDv2(id); err == nil {
+			// 违规虚拟ID在查询时会被内部重映射并删除旧反向键，
+			// 此时原始数字ID已失效，需用真实值反查当前有效的虚拟ID。
+			if idmap.IsViolateID(row) {
+				if _, virtualID, err := idmap.RetrieveVirtualValuev2(realID); err == nil {
+					return virtualID
+				}
+			}
+			return id
+		}
+	}
+	if _, virtualID, err := idmap.RetrieveVirtualValuev2(id); err == nil {
+		return virtualID
+	}
+	return id
+}
+
+func resolveEchoVirtualIDInt64(id string) (int64, error) {
+	virtualID := resolveEchoVirtualID(id)
+	row, err := strconv.ParseInt(virtualID, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("ID %q has no existing virtual mapping", id)
+	}
+	return row, nil
+}
+
+func resolveEchoVirtualIDPair(groupID, userID string) (int64, int64, error) {
+	if groupRow, groupErr := strconv.ParseInt(groupID, 10, 64); groupErr == nil {
+		if userRow, userErr := strconv.ParseInt(userID, 10, 64); userErr == nil {
+			return groupRow, userRow, nil
+		}
+	}
+	virtualGroupID, virtualUserID, err := idmap.RetrieveVirtualValuev2Pro(groupID, userID)
+	if err != nil {
+		return 0, 0, err
+	}
+	groupRow, err := strconv.ParseInt(virtualGroupID, 10, 64)
+	if err != nil {
+		return 0, 0, err
+	}
+	userRow, err := strconv.ParseInt(virtualUserID, 10, 64)
+	if err != nil {
+		return 0, 0, err
+	}
+	return groupRow, userRow, nil
+}
+
+func resolveExplicitMessageID(messageID string) (string, error) {
+	if messageID == "" || messageID == "0" || !isVirtualMessageID(messageID) {
+		return messageID, nil
+	}
+	if config.GetMemoryMsgid() {
+		if realID, ok := echo.GetCacheIDFromMemoryByRowID(messageID); ok {
+			return realID, nil
+		}
+		return "", fmt.Errorf("message_id %s is not present in the in-memory cache", messageID)
+	}
+	realID, err := idmap.RetrieveRowByCachev2(messageID)
+	if err != nil {
+		return "", fmt.Errorf("resolve message_id %s: %w", messageID, err)
+	}
+	return realID, nil
+}
+
+func normalizePlatformEventID(eventID string) string {
+	if index := strings.LastIndex(eventID, ":"); index >= 0 && index < len(eventID)-1 {
+		return eventID[index+1:]
+	}
+	return eventID
+}
+
+func resolveExplicitEventID(eventID string) string {
+	if eventID == "" || eventID == "0" || !isVirtualMessageID(eventID) {
+		return normalizePlatformEventID(eventID)
+	}
+	if realID, ok := echo.GetCacheIDFromMemoryByRowID(eventID); ok {
+		return normalizePlatformEventID(realID)
+	}
+	// Legacy versions stored event IDs in the stable entity bucket. Keep old
+	// notices usable during migration without creating any new mapping.
+	if realID, err := idmap.RetrieveRowByIDv2(eventID); err == nil {
+		return normalizePlatformEventID(realID)
+	}
+	return eventID
 }
 
 func HandleSendMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openapi.OpenAPI, message callapi.ActionMessage) (string, error) {
@@ -204,13 +299,8 @@ func GetMessageIDByUseridOrGroupid(appID string, userID interface{}) string {
 		// 可能需要处理其他类型或报错
 		return ""
 	}
-	//将真实id转为int
-	userid64, err := idmap.StoreIDv2(userIDStr)
-	if err != nil {
-		mylog.Printf("Error storing ID 241: %v", err)
-		return ""
-	}
-	key := appID + "_" + fmt.Sprint(userid64)
+	virtualUserID := resolveEchoVirtualID(userIDStr)
+	key := appID + "_" + virtualUserID
 	messageid := echo.GetMsgIDByKey(key)
 	if messageid == "" {
 		key := appID + "_" + userIDStr
@@ -236,13 +326,8 @@ func GetEventIDByUseridOrGroupid(appID string, userID interface{}) string {
 		// 可能需要处理其他类型或报错
 		return ""
 	}
-	//将真实id转为int 这是非idmap-pro的方式
-	userid64, err := idmap.StoreIDv2(userIDStr)
-	if err != nil {
-		mylog.Printf("Error storing ID 241: %v", err)
-		return ""
-	}
-	key := appID + "_" + fmt.Sprint(userid64)
+	virtualUserID := resolveEchoVirtualID(userIDStr)
+	key := appID + "_" + virtualUserID
 	eventid := echo.GetEventIDByKey(key)
 	if eventid == "" {
 		// 用原始id获取,这个分支应该是没有用的.
@@ -308,28 +393,18 @@ func GetMessageIDByUseridAndGroupid(appID string, userID interface{}, groupID in
 		// 可能需要处理其他类型或报错
 		return ""
 	}
-	var userid64, groupid64 int64
-	var err error
+	var virtualUserID, virtualGroupID string
 	if config.GetIdmapPro() {
-		//将真实id转为int userid64
-		groupid64, userid64, err = idmap.StoreIDv2Pro(GroupIDStr, userIDStr)
+		var err error
+		virtualGroupID, virtualUserID, err = idmap.RetrieveVirtualValuev2Pro(GroupIDStr, userIDStr)
 		if err != nil {
-			mylog.Errorf("Error storing ID 210: %v", err)
+			// Inputs may already be the Pro virtual pair.
+			virtualGroupID, virtualUserID = GroupIDStr, userIDStr
 		}
 	} else {
-		//将真实id转为int
-		userid64, err = idmap.StoreIDv2(userIDStr)
-		if err != nil {
-			mylog.Errorf("Error storing ID 241: %v", err)
-			return ""
-		}
-		//将真实id转为int
-		groupid64, err = idmap.StoreIDv2(GroupIDStr)
-		if err != nil {
-			mylog.Errorf("Error storing ID 256: %v", err)
-			return ""
-		}
+		virtualUserID = resolveEchoVirtualID(userIDStr)
+		virtualGroupID = resolveEchoVirtualID(GroupIDStr)
 	}
-	key := appID + "_" + fmt.Sprint(groupid64) + "_" + fmt.Sprint(userid64)
+	key := appID + "_" + virtualGroupID + "_" + virtualUserID
 	return echo.GetMsgIDByKey(key)
 }

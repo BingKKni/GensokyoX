@@ -78,66 +78,16 @@ func SendResponse(client callapi.Client, err error, message *callapi.ActionMessa
 	var errr error
 	var GroupID64 int64
 	if groupID, ok := message.Params.GroupID.(string); ok && groupID != "" {
-		if config.GetIdmapPro() {
-			//将真实id转为int userid64
-			GroupID64, _, errr = idmap.StoreIDv2Pro(message.Params.GroupID.(string), message.Params.UserID.(string))
-			if errr != nil {
-				mylog.Errorf("Error storing ID: %v", err)
-			}
+		if userID, ok := message.Params.UserID.(string); config.GetIdmapPro() && ok && userID != "" {
+			GroupID64, _, errr = resolveEchoVirtualIDPair(groupID, userID)
 		} else {
-			// 映射str的GroupID到int
-			GroupID64, errr = idmap.StoreIDv2(message.Params.GroupID.(string))
-			if errr != nil {
-				mylog.Errorf("failed to convert GroupID64 to int: %v", err)
-			}
+			GroupID64, errr = resolveEchoVirtualIDInt64(groupID)
 		}
-	}
-
-	if channelID, ok := message.Params.ChannelID.(string); ok && channelID != "" {
-		if config.GetIdmapPro() {
-			//将真实id转为int userid64
-			_, _, errr = idmap.StoreIDv2Pro(message.Params.ChannelID.(string), message.Params.UserID.(string))
-			if errr != nil {
-				mylog.Errorf("Error storing ID: %v", err)
-			}
-		} else {
-			// 映射str的GroupID到int
-			_, errr = idmap.StoreIDv2(message.Params.ChannelID.(string))
-			if errr != nil {
-				mylog.Errorf("failed to convert GroupID64 to int: %v", err)
-			}
+		if errr != nil {
+			GroupID64, errr = resolveEchoVirtualIDInt64(groupID)
 		}
-	}
-
-	if guildID, ok := message.Params.GuildID.(string); ok && guildID != "" {
-		if config.GetIdmapPro() {
-			//将真实id转为int userid64
-			_, _, errr = idmap.StoreIDv2Pro(message.Params.GuildID.(string), message.Params.UserID.(string))
-			if errr != nil {
-				mylog.Errorf("Error storing ID: %v", err)
-			}
-		} else {
-			// 映射str的GroupID到int
-			_, errr = idmap.StoreIDv2(message.Params.GuildID.(string))
-			if errr != nil {
-				mylog.Errorf("failed to convert GroupID64 to int: %v", err)
-			}
-		}
-	}
-
-	if userID, ok := message.Params.UserID.(string); ok && userID != "" {
-		if config.GetIdmapPro() {
-			//将真实id转为int userid64
-			_, _, errr = idmap.StoreIDv2Pro("group_private", message.Params.UserID.(string))
-			if errr != nil {
-				mylog.Errorf("Error storing ID: %v", err)
-			}
-		} else {
-			// 映射str的GroupID到int
-			_, errr = idmap.StoreIDv2(message.Params.UserID.(string))
-			if errr != nil {
-				mylog.Errorf("failed to convert GroupID64 to int: %v", err)
-			}
+		if errr != nil {
+			mylog.Errorf("failed to resolve GroupID64: %v", errr)
 		}
 	}
 
@@ -227,9 +177,9 @@ func SendGuildResponse(client callapi.Client, err error, message *callapi.Action
 	}
 	// 当有错误时，不设置假的message_id，保持Data为空
 	//转换成int
-	ChannelID64, errr := idmap.StoreIDv2(message.Params.ChannelID.(string))
+	ChannelID64, errr := resolveEchoVirtualIDInt64(message.Params.ChannelID.(string))
 	if errr != nil {
-		mylog.Printf("Error storing ID: %v", err)
+		mylog.Printf("Error resolving channel ID: %v", errr)
 		return "", nil
 	}
 	response.ChannelID = ChannelID64
@@ -325,10 +275,9 @@ func SendC2CResponse(client callapi.Client, err error, message *callapi.ActionMe
 		botstats.RecordMessageSent()
 	}
 	// 当有错误时，不设置假的message_id，保持Data为空
-	//将真实id转为int userid64
-	userid64, errr := idmap.StoreIDv2(message.Params.UserID.(string))
+	userid64, errr := resolveEchoVirtualIDInt64(message.Params.UserID.(string))
 	if errr != nil {
-		mylog.Errorf("Error storing ID: %v", err)
+		mylog.Errorf("Error resolving user ID: %v", errr)
 	}
 	response.UserID = userid64
 	response.TraceID = api.TraceID()

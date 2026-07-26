@@ -294,18 +294,28 @@ func HandleSendGroupMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openap
 		}
 
 		// 如果eventID为空，并且有传入的EventID，则使用传入的
-		if eventID == "" && message.Params.EventID != nil && message.Params.EventID.(string) != "" {
-			eventID = message.Params.EventID.(string)
-		}
-
-		// 调用方显式指定 message_id == "0" 时，强制以主动消息方式发送（不附带 msg_id）
-		// 若已有可用 event_id 仍会附带，行为与 lazy_message_id == "2000" 一致
-		if mid, ok := message.Params.MessageID.(string); ok && mid == "0" {
-			messageID = ""
-			if eventID == "" {
-				eventID = GetEventIDByUseridOrGroupid(config.GetAppIDStr(), message.Params.GroupID)
+		if eventID == "" {
+			if passedEventID := paramString(message.Params.EventID); passedEventID != "" {
+				eventID = passedEventID
 			}
 		}
+
+		// An explicit message_id always wins over process-global lazy context.
+		// Numeric IDs are framework short IDs and must be resolved first.
+		if mid := paramString(message.Params.MessageID); mid != "" {
+			if mid == "0" {
+				messageID = ""
+				if eventID == "" {
+					eventID = GetEventIDByUseridOrGroupid(config.GetAppIDStr(), message.Params.GroupID)
+				}
+			} else {
+				messageID, err = resolveExplicitMessageID(mid)
+				if err != nil {
+					return "", err
+				}
+			}
+		}
+		eventID = resolveExplicitEventID(eventID)
 
 		// mylog.Printf("群组发信息messageID:[%v] eventID:[%v]", messageID, eventID)
 
