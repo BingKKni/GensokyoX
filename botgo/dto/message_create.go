@@ -160,6 +160,7 @@ type StreamSSE struct {
 	State int    `json:"state"`
 	Index int    `json:"index"`
 	ID    string `json:"id,omitempty"`
+	Reset bool   `json:"reset,omitempty"`
 }
 
 type KeyboardSSE struct {

@@ -383,8 +383,9 @@ func handleSendPrivateMessageSSE(c *gin.Context, api openapi.OpenAPI, apiV2 open
 	// 根据请求方法解析参数
 	if c.Request.Method == http.MethodGet {
 		var req struct {
-			GroupID    int64  `json:"group_id" form:"group_id"`
-			UserID     int64  `json:"user_id" form:"user_id"`
+			GroupID    string `json:"group_id" form:"group_id"`
+			UserID     string `json:"user_id" form:"user_id"`
+			MessageID  string `json:"message_id" form:"message_id"`
 			Message    string `json:"message" form:"message"`
 			AutoEscape bool   `json:"auto_escape" form:"auto_escape"`
 		}
@@ -404,9 +405,10 @@ func handleSendPrivateMessageSSE(c *gin.Context, api openapi.OpenAPI, apiV2 open
 		message := callapi.ActionMessage{
 			Action: "send_private_msg_sse",
 			Params: callapi.ParamsContent{
-				GroupID: strconv.FormatInt(req.GroupID, 10), // 注意这里需要转换类型，因为 GroupID 是 int64
-				UserID:  strconv.FormatInt(req.UserID, 10),
-				Message: InterfaceBody,
+				GroupID:   req.GroupID,
+				UserID:    req.UserID,
+				MessageID: req.MessageID,
+				Message:   InterfaceBody,
 			},
 		}
 		// 调用处理函数
@@ -421,8 +423,9 @@ func handleSendPrivateMessageSSE(c *gin.Context, api openapi.OpenAPI, apiV2 open
 		c.String(http.StatusOK, retmsg)
 	} else {
 		var req struct {
-			GroupID    int64       `json:"group_id" form:"group_id"`
-			UserID     int64       `json:"user_id" form:"user_id"`
+			GroupID    interface{} `json:"group_id" form:"group_id"`
+			UserID     interface{} `json:"user_id" form:"user_id"`
+			MessageID  interface{} `json:"message_id" form:"message_id"`
 			Message    interface{} `json:"message" form:"message"`
 			AutoEscape bool        `json:"auto_escape" form:"auto_escape"`
 		}
@@ -437,9 +440,10 @@ func handleSendPrivateMessageSSE(c *gin.Context, api openapi.OpenAPI, apiV2 open
 		message := callapi.ActionMessage{
 			Action: "send_private_msg_sse",
 			Params: callapi.ParamsContent{
-				GroupID: strconv.FormatInt(req.GroupID, 10), // 注意这里需要转换类型，因为 GroupID 是 int64
-				UserID:  strconv.FormatInt(req.UserID, 10),
-				Message: req.Message,
+				GroupID:   convertToString(req.GroupID),
+				UserID:    convertToString(req.UserID),
+				MessageID: convertToString(req.MessageID),
+				Message:   req.Message,
 			},
 		}
 		// 调用处理函数

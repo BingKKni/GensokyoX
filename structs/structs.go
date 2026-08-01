@@ -175,6 +175,7 @@ type Settings struct {
 type InterfaceBody struct {
 	Content        string   `json:"content"`
 	State          int      `json:"state"`
+	Reset          bool     `json:"reset,omitempty"`
 	PromptKeyboard []string `json:"prompt_keyboard,omitempty"`
 	ActionButton   int      `json:"action_button,omitempty"`
 	CallbackData   string   `json:"callback_data,omitempty"`

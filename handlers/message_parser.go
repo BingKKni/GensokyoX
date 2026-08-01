@@ -255,6 +255,16 @@ func parseErrorFromErr(err error) (message string, errorCode int, traceID string
 
 // 发送成功回执 todo 返回可互转的messageid 实现C2C撤回api
 func SendC2CResponse(client callapi.Client, err error, message *callapi.ActionMessage, resp *dto.C2CMessageResponse, api openapi.OpenAPI) (string, error) {
+	return sendC2CResponse(client, err, message, resp, api, true, false)
+}
+
+// SendC2CStreamResponse avoids a synchronous bbolt fsync on the response path.
+// A stream contains many API fragments but represents one user-visible message.
+func SendC2CStreamResponse(client callapi.Client, err error, message *callapi.ActionMessage, resp *dto.C2CMessageResponse, api openapi.OpenAPI, countMessage bool) (string, error) {
+	return sendC2CResponse(client, err, message, resp, api, countMessage, true)
+}
+
+func sendC2CResponse(client callapi.Client, err error, message *callapi.ActionMessage, resp *dto.C2CMessageResponse, api openapi.OpenAPI, countMessage, asyncStats bool) (string, error) {
 	var messageID64 int64
 	var mapErr error
 	// 设置响应值
@@ -276,7 +286,13 @@ func SendC2CResponse(client callapi.Client, err error, message *callapi.ActionMe
 		response.Data.MessageID = int(messageID64)
 		response.Data.RealMessageID = resp.Message.ID
 		// 发送成功 增加今日发信息数
-		botstats.RecordMessageSent()
+		if countMessage {
+			if asyncStats {
+				go botstats.RecordMessageSent()
+			} else {
+				botstats.RecordMessageSent()
+			}
+		}
 	}
 	// 当有错误时，不设置假的message_id，保持Data为空
 	userid64, errr := resolveEchoVirtualIDInt64(message.Params.UserID.(string))

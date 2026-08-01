@@ -15,32 +15,62 @@ import (
 	"github.com/tencent-connect/botgo/openapi"
 )
 
-var msgIDToIndex sync.Map
-var msgIDToRelatedID sync.Map
+var streamState = struct {
+	sync.RWMutex
+	indexByMessageID   map[string]int
+	relatedByMessageID map[string]string
+}{
+	indexByMessageID:   make(map[string]int),
+	relatedByMessageID: make(map[string]string),
+}
 
 func init() {
 	callapi.RegisterHandler("send_private_msg_sse", HandleSendPrivateMsgSSE)
 }
 
 func incrementIndex(msgID string) int {
-	actual, loaded := msgIDToIndex.LoadOrStore(msgID, 0)
+	streamState.Lock()
+	defer streamState.Unlock()
+	index, loaded := streamState.indexByMessageID[msgID]
 	if !loaded {
+		streamState.indexByMessageID[msgID] = 0
 		return 0
 	}
-	newVal := actual.(int) + 1
-	msgIDToIndex.Store(msgID, newVal)
+	newVal := index + 1
+	streamState.indexByMessageID[msgID] = newVal
 	return newVal
 }
 
+func clearStreamState(msgID string) {
+	streamState.Lock()
+	defer streamState.Unlock()
+	delete(streamState.indexByMessageID, msgID)
+	delete(streamState.relatedByMessageID, msgID)
+}
+
+func rollbackIndex(msgID string, failedIndex int) {
+	streamState.Lock()
+	defer streamState.Unlock()
+	if streamState.indexByMessageID[msgID] != failedIndex {
+		return
+	}
+	if failedIndex == 0 {
+		delete(streamState.indexByMessageID, msgID)
+		return
+	}
+	streamState.indexByMessageID[msgID] = failedIndex - 1
+}
+
 func UpdateRelatedID(MessageID, ID string) {
-	msgIDToRelatedID.Store(MessageID, ID)
+	streamState.Lock()
+	defer streamState.Unlock()
+	streamState.relatedByMessageID[MessageID] = ID
 }
 
 func GetRelatedID(MessageID string) string {
-	if relatedID, ok := msgIDToRelatedID.Load(MessageID); ok {
-		return relatedID.(string)
-	}
-	return ""
+	streamState.RLock()
+	defer streamState.RUnlock()
+	return streamState.relatedByMessageID[MessageID]
 }
 
 func HandleSendPrivateMsgSSE(client callapi.Client, api openapi.OpenAPI, apiv2 openapi.OpenAPI, message callapi.ActionMessage) (string, error) {
@@ -55,16 +85,15 @@ func HandleSendPrivateMsgSSE(client callapi.Client, api openapi.OpenAPI, apiv2 o
 		case int64:
 			return v != 0
 		case string:
-			return v != "0" // 同样检查字符串形式的0
+			return v != "" && v != "0"
 		default:
-			return true // 如果不是int、int64或string，假定它不为0
+			return false
 		}
 	}
 
 	// New checks for UserID and GroupID being nil or 0
 	if message.Params.UserID == nil || !checkZeroUserID(message.Params.UserID) {
-		mylog.Printf("send_group_msg_sse接收到错误action: %v", message)
-		return "", nil
+		return "", fmt.Errorf("send_private_msg_sse requires a valid user_id")
 	}
 
 	var err error
@@ -99,7 +128,7 @@ func HandleSendPrivateMsgSSE(client callapi.Client, api openapi.OpenAPI, apiv2 o
 	// 首先，将message.Params.Message序列化成JSON字符串
 	messageJSON, err := json.Marshal(message.Params.Message)
 	if err != nil {
-		fmt.Printf("Error marshalling message: %v\n", err)
+		mylog.Errorf("Error marshalling stream message: %v", err)
 		return "", nil
 	}
 
@@ -107,39 +136,51 @@ func HandleSendPrivateMsgSSE(client callapi.Client, api openapi.OpenAPI, apiv2 o
 	var messageBody structs.InterfaceBody
 	err = json.Unmarshal(messageJSON, &messageBody)
 	if err != nil {
-		fmt.Printf("Error unmarshalling to InterfaceBody: %v\n", err)
+		mylog.Errorf("Error unmarshalling stream message: %v", err)
 		return "", nil
 	}
+	if messageBody.State != 1 && messageBody.State != 10 && messageBody.State != 11 && messageBody.State != 20 {
+		return "", fmt.Errorf("send_private_msg_sse received invalid state %d", messageBody.State)
+	}
 
-	// 输出反序列化后的对象，确认是否成功转换
-	fmt.Printf("Recovered InterfaceBody: %+v\n", messageBody)
-
-	// 使用 echo 获取消息ID
-	var messageID string
+	// 显式平台消息 ID 可避开全局 lazy context，并保证并发流互不串线。
+	messageID := paramString(message.Params.MessageID)
+	if messageID != "" {
+		messageID, err = resolveExplicitMessageID(messageID)
+		if err != nil {
+			return "", err
+		}
+	}
 
 	// 如果messageID仍然为空，尝试使用config.GetAppID和UserID的组合来获取messageID
 	if messageID == "" {
 		messageID = GetMessageIDByUseridOrGroupid(config.GetAppIDStr(), UserID)
-		mylog.Errorf("通过GetMessageIDByUserid函数获取的message_id:" + messageID)
+	}
+	if messageID == "" {
+		return "", fmt.Errorf("send_private_msg_sse requires a valid message_id")
 	}
 
 	// 获取并打印相关ID
 	relatedID := GetRelatedID(messageID)
+	isFirstFragment := relatedID == ""
 
 	dtoSSE := generateMessageSSE(messageBody, messageID, relatedID)
 
 	resp, err = apiv2.PostC2CMessageSSE(context.TODO(), UserID, dtoSSE)
 	if err != nil {
+		rollbackIndex(messageID, dtoSSE.Stream.Index)
 		mylog.Errorf("发送文本私聊信息失败: %v", err)
-		//如果失败 防止进入递归
-		return "", nil
+		return "", err
 	}
 
 	// 更新或刷新映射关系
 	UpdateRelatedID(messageID, resp.Message.ID)
 
-	//发送成功回执
-	retmsg, _ = SendC2CResponse(client, err, &message, resp, apiv2)
+	// 一个流只产生一条用户可见消息，因此只在首片记录一次统计。
+	retmsg, _ = SendC2CStreamResponse(client, err, &message, resp, apiv2, isFirstFragment)
+	if messageBody.State == 10 || messageBody.State == 20 {
+		clearStreamState(messageID)
+	}
 
 	return retmsg, nil
 }
@@ -187,6 +228,7 @@ func generateMessageSSE(body structs.InterfaceBody, msgID, ID string) *dto.Messa
 	msgsse.Stream = &dto.StreamSSE{
 		State: body.State,
 		Index: index,
+		Reset: body.Reset,
 	}
 
 	if ID != "" {
