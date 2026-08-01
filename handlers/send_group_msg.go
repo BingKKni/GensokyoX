@@ -169,10 +169,14 @@ func HandleSendGroupMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openap
 		var messageID string
 		// EventID
 		var eventID string
+		// 调用方是否显式指定了 event_id。显式指定的不受 message_id=0 的主动消息语义影响,
+		// 只有从群级缓存兜底取来的才会被清掉
+		var explicitEventID bool
 
 		// 优先使用从参数传入的EventID
 		if message.Params.EventID != nil && message.Params.EventID.(string) != "" {
 			eventID = message.Params.EventID.(string)
+			explicitEventID = true
 		}
 
 		if config.GetLazyMessageId() {
@@ -297,6 +301,7 @@ func HandleSendGroupMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openap
 		if eventID == "" {
 			if passedEventID := paramString(message.Params.EventID); passedEventID != "" {
 				eventID = passedEventID
+				explicitEventID = true
 			}
 		}
 
@@ -304,9 +309,13 @@ func HandleSendGroupMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openap
 		// Numeric IDs are framework short IDs and must be resolved first.
 		if mid := paramString(message.Params.MessageID); mid != "" {
 			if mid == "0" {
+				// message_id=0 表示调用方明确要求走主动消息。
+				// 群级缓存里的 event_id 是上一次按钮回调留下的兜底值, 而群聊 event_id 只有
+				// 5分钟有效期、缓存却保留更久, 附带上去会被平台判 40034026(event_id已过期),
+				// 所以这里不再兜底注入, 并清掉前面已兜底取到的值, 只保留调用方显式传入的。
 				messageID = ""
-				if eventID == "" {
-					eventID = GetEventIDByUseridOrGroupid(config.GetAppIDStr(), message.Params.GroupID)
+				if !explicitEventID {
+					eventID = ""
 				}
 			} else {
 				messageID, err = resolveExplicitMessageID(mid)
@@ -420,9 +429,9 @@ func HandleSendGroupMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openap
 				pair.Group = message.Params.GroupID.(string)
 				pair.GroupMessage = groupMessage
 				echo.PushGlobalStack(pair)
-			} else if err != nil && (strings.Contains(err.Error(), `"code":40034025`) || strings.Contains(err.Error(), `"code":11255`) || strings.Contains(err.Error(), `"err_code":11255`)) {
-				// event_id无效的时候（包括40034025和11255错误码）
-				mylog.Printf("EventID无效（错误码40034025或11255），尝试不使用EventID重新发送")
+			} else if isEventIDRejected(err) {
+				// event_id无效(40034025/11255)或已过期(40034026)
+				mylog.Printf("EventID无效或已过期（错误码40034025/40034026/11255），尝试不使用EventID重新发送")
 				groupMessage.EventID = ""
 				resp, err = apiv2.PostGroupMessage(context.TODO(), message.Params.GroupID.(string), groupMessage)
 				if err != nil {
@@ -503,9 +512,9 @@ func HandleSendGroupMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openap
 				pair.Group = message.Params.GroupID.(string)
 				pair.GroupMessage = groupMessage
 				echo.PushGlobalStack(pair)
-			} else if err != nil && (strings.Contains(err.Error(), `"code":40034025`) || strings.Contains(err.Error(), `"code":11255`) || strings.Contains(err.Error(), `"err_code":11255`)) {
-				// event_id无效的时候（包括40034025和11255错误码）
-				mylog.Printf("EventID无效（错误码40034025或11255），尝试不使用EventID重新发送")
+			} else if isEventIDRejected(err) {
+				// event_id无效(40034025/11255)或已过期(40034026)
+				mylog.Printf("EventID无效或已过期（错误码40034025/40034026/11255），尝试不使用EventID重新发送")
 				groupMessage.EventID = ""
 				resp, err = apiv2.PostGroupMessage(context.TODO(), message.Params.GroupID.(string), groupMessage)
 				if err != nil {
@@ -595,14 +604,14 @@ func HandleSendGroupMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openap
 							pair.Group = message.Params.GroupID.(string)
 							pair.GroupMessage = groupMessage
 							echo.PushGlobalStack(pair)
-						} else if err != nil && (strings.Contains(err.Error(), `"code":40034025`) || strings.Contains(err.Error(), `"code":11255`) || strings.Contains(err.Error(), `"err_code":11255`)) {
-							//请求参数event_id无效 重试（包括40034025和11255错误码）
-							mylog.Printf("EventID无效（错误码40034025或11255），尝试不使用EventID重新发送")
+						} else if isEventIDRejected(err) {
+							//请求参数event_id无效(40034025/11255)或已过期(40034026) 重试
+							mylog.Printf("EventID无效或已过期（错误码40034025/40034026/11255），尝试不使用EventID重新发送")
 							groupMessage.EventID = ""
 							//重新为err赋值
 							resp, err = apiv2.PostGroupMessage(context.TODO(), message.Params.GroupID.(string), groupMessage)
 							if err != nil {
-								mylog.Printf("发送 MessageToCreate 信息失败 on code 40034025/11255: %v", err)
+								mylog.Printf("发送 MessageToCreate 信息失败 on code 40034025/40034026/11255: %v", err)
 								// 错误保存到本地
 								if config.GetSaveError() {
 									mylog.ErrLogToFile("type", "PostGroupMessage")
@@ -666,9 +675,9 @@ func HandleSendGroupMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openap
 							pair.Group = message.Params.GroupID.(string)
 							pair.GroupMessage = groupMessage
 							echo.PushGlobalStack(pair)
-						} else if err != nil && (strings.Contains(err.Error(), `"code":40034025`) || strings.Contains(err.Error(), `"code":11255`) || strings.Contains(err.Error(), `"err_code":11255`)) {
-							// event_id无效的时候（包括40034025和11255错误码）
-							mylog.Printf("EventID无效（错误码40034025或11255），尝试不使用EventID重新发送")
+						} else if isEventIDRejected(err) {
+							// event_id无效(40034025/11255)或已过期(40034026)
+							mylog.Printf("EventID无效或已过期（错误码40034025/40034026/11255），尝试不使用EventID重新发送")
 							groupMessage.EventID = ""
 							resp, err = apiv2.PostGroupMessage(context.TODO(), message.Params.GroupID.(string), groupMessage)
 							if err != nil {
@@ -725,7 +734,9 @@ func HandleSendGroupMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openap
 						pair.Group = message.Params.GroupID.(string)
 						pair.GroupMessage = groupMessage
 						echo.PushGlobalStack(pair)
-					} else if err != nil && strings.Contains(err.Error(), `"code":40034025`) {
+					} else if isEventIDRejected(err) {
+						// event_id无效(40034025/11255)或已过期(40034026)
+						mylog.Printf("EventID无效或已过期（错误码40034025/40034026/11255），尝试不使用EventID重新发送")
 						groupMessage.EventID = ""
 						resp, err = apiv2.PostGroupMessage(context.TODO(), message.Params.GroupID.(string), groupMessage)
 						if err != nil {

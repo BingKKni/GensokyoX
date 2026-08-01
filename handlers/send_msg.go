@@ -90,26 +90,39 @@ func resolveExplicitMessageID(messageID string) (string, error) {
 	return realID, nil
 }
 
-func normalizePlatformEventID(eventID string) string {
-	if index := strings.LastIndex(eventID, ":"); index >= 0 && index < len(eventID)-1 {
-		return eventID[index+1:]
-	}
-	return eventID
-}
-
 func resolveExplicitEventID(eventID string) string {
+	// 平台的被动回复要求 event_id 保持上报时的完整形态(如 "GROUP_MEMBER_ADD:uuid",
+	// 即 payload 外层 id), 剥掉类型前缀只发 uuid 会被判 40034025(event_id 无效),
+	// 因此这里各分支都原样返回, 不做任何裁剪
 	if eventID == "" || eventID == "0" || !isVirtualMessageID(eventID) {
-		return normalizePlatformEventID(eventID)
+		return eventID
 	}
 	if realID, ok := echo.GetCacheIDFromMemoryByRowID(eventID); ok {
-		return normalizePlatformEventID(realID)
+		return realID
 	}
 	// Legacy versions stored event IDs in the stable entity bucket. Keep old
 	// notices usable during migration without creating any new mapping.
 	if realID, err := idmap.RetrieveRowByIDv2(eventID); err == nil {
-		return normalizePlatformEventID(realID)
+		return realID
 	}
 	return eventID
+}
+
+// 平台因 event_id 本身不可用而拒收的错误码:
+// 40034025/11255 为 event_id 无效, 40034026 为 event_id 已过期
+// (群聊 event_id 仅5分钟有效期, 单聊为60分钟)。
+// 这几种都应当清空 event_id 后转主动消息重发, 避免消息静默丢失。
+func isEventIDRejected(err error) bool {
+	if err == nil {
+		return false
+	}
+	errText := err.Error()
+	for _, code := range []string{"40034025", "40034026", "11255"} {
+		if strings.Contains(errText, `"code":`+code) || strings.Contains(errText, `"err_code":`+code) {
+			return true
+		}
+	}
+	return false
 }
 
 func HandleSendMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openapi.OpenAPI, message callapi.ActionMessage) (string, error) {

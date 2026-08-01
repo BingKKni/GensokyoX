@@ -13,10 +13,13 @@ import (
 )
 
 const (
-	// 私信环境下平台 msg_id 有效期为1小时，统一取60分钟以覆盖该上限；
-	// 大多数 event_id/msg_id 实际5分钟即过期，多保留一会无副作用。
+	// 私信环境下平台 msg_id 有效期为1小时，统一取60分钟以覆盖该上限。
 	echoMappingTTL    = 60 * time.Minute
 	messageIDCacheTTL = 60 * time.Minute
+	// 群聊被动消息的 event_id 有效期只有5分钟（单聊才是60分钟），
+	// 按 echoMappingTTL 缓存会把早已过期的 event_id 兜底发出去，
+	// 被平台判 40034026(请求参数event_id已过期)。这里留30秒安全余量。
+	eventIDGroupTTL = 4*time.Minute + 30*time.Second
 )
 
 type expiringString struct {
@@ -173,9 +176,13 @@ func (e *EchoMapping) GenerateKeyv3(appid string, s string) string {
 }
 
 func storeExpiringString(mapping *sync.Map, key, value string) {
+	storeExpiringStringWithTTL(mapping, key, value, echoMappingTTL)
+}
+
+func storeExpiringStringWithTTL(mapping *sync.Map, key, value string, ttl time.Duration) {
 	mapping.Store(key, expiringString{
 		value:     value,
-		expiresAt: time.Now().Add(echoMappingTTL),
+		expiresAt: time.Now().Add(ttl),
 	})
 }
 
@@ -219,12 +226,19 @@ func AddMsgIDv2(appid string, groupid int64, userid int64, msgID string) {
 // 添加group对应的eventid
 func AddEvnetID(appid string, groupid int64, eventID string) {
 	key := globalEchoMapping.GenerateKeyEventID(appid, groupid)
-	storeExpiringString(&globalEchoMapping.eventIDMapping, key, eventID)
+	storeExpiringStringWithTTL(&globalEchoMapping.eventIDMapping, key, eventID, eventIDGroupTTL)
 }
 
 // 添加group对应的eventid
 func AddEvnetIDv2(appid string, groupid string, eventID string) {
 	key := globalEchoMapping.GenerateKeyEventIDV2(appid, groupid)
+	storeExpiringStringWithTTL(&globalEchoMapping.eventIDMapping, key, eventID, eventIDGroupTTL)
+}
+
+// 添加私聊(C2C)用户对应的eventid。私聊被动消息有效期为60分钟, 不适用群聊的5分钟限制,
+// key 的生成方式与 AddEvnetID 一致, 取用侧无需区分。
+func AddEvnetIDC2C(appid string, userid int64, eventID string) {
+	key := globalEchoMapping.GenerateKeyEventID(appid, userid)
 	storeExpiringString(&globalEchoMapping.eventIDMapping, key, eventID)
 }
 

@@ -122,8 +122,9 @@ func handleGetGroupRecentMessages(c *gin.Context) {
 //
 // message_id 说明（可选参数）：
 //   - 不传或为空：保持原有行为，自动根据 echo / lazy_message_id / idmap 选择 msg_id；
-//   - 传 "0"：强制以主动消息方式发送（不附带 msg_id，若存在可用的 event_id 仍会附带，
-//     与内部 lazy_message_id == "2000" 的行为保持一致）。
+//   - 传 "0"：强制以主动消息方式发送，既不附带 msg_id，也不会从群级缓存兜底取 event_id
+//     （群聊 event_id 仅5分钟有效期，兜底值大概率已过期，附带上去会被平台判 40034026）。
+//     确需被动发送时请显式传 event_id，显式传入的不受此规则影响。
 func handleSendGroupMessage(c *gin.Context, api openapi.OpenAPI, apiV2 openapi.OpenAPI) {
 	var retmsg string
 	var req struct {
