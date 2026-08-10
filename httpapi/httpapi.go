@@ -4,12 +4,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"reflect"
 	"strconv"
 	"strings"
 
 	"github.com/hoshinonyaruko/gensokyo/config"
 	"github.com/hoshinonyaruko/gensokyo/handlers"
+	"github.com/hoshinonyaruko/gensokyo/idmap"
 	"github.com/hoshinonyaruko/gensokyo/recentmsg"
 	"github.com/hoshinonyaruko/gensokyo/structs"
 
@@ -54,6 +56,14 @@ func CombinedMiddleware(api openapi.OpenAPI, apiV2 openapi.OpenAPI) gin.HandlerF
 		}
 		if c.Request.URL.Path == "/get_group_list" {
 			handleGetGroupList(c, api, apiV2)
+			return
+		}
+		if c.Request.URL.Path == "/get_group_info" {
+			handleGetGroupOpenAPI(c, apiV2, "info")
+			return
+		}
+		if c.Request.URL.Path == "/get_group_bot_status" {
+			handleGetGroupOpenAPI(c, apiV2, "bot_state")
 			return
 		}
 		if c.Request.URL.Path == "/put_interaction" {
@@ -116,6 +126,33 @@ func handleGetGroupRecentMessages(c *gin.Context) {
 		"limit":    limit,
 		"messages": recentmsg.GetGroupMessages(groupID, limit),
 	})
+}
+
+func handleGetGroupOpenAPI(c *gin.Context, apiV2 openapi.OpenAPI, endpoint string) {
+	groupOpenID := c.Query("group_openid")
+	if groupOpenID == "" {
+		groupID := c.Query("group_id")
+		if groupID == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("缺少 group_id 或 group_openid。调用方式: %s?group_id=1 或 %s?group_openid=xxxxxx", c.Request.URL.Path, c.Request.URL.Path)})
+			return
+		}
+
+		var err error
+		groupOpenID, err = idmap.RetrieveRowByIDv2(groupID)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("failed to resolve group_id: %v", err)})
+			return
+		}
+	}
+
+	result, err := apiV2.Transport(c.Request.Context(), http.MethodGet,
+		fmt.Sprintf("https://api.sgroup.qq.com/v2/groups/%s/%s", url.PathEscape(groupOpenID), endpoint), nil)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.Data(http.StatusOK, "application/json", result)
 }
 
 // handleSendGroupMessage 处理发送群聊消息的请求
