@@ -132,6 +132,8 @@ func (p *Processors) ProcessChannelDirectMessage(data *dto.WSDirectMessageData, 
 		}
 		//enhanced config
 		privateMsg.RealMessageType = "guild_private"
+		// 与群场景对齐,应用端会丢弃缺少real_user_id的消息
+		privateMsg.RealUserID = data.Author.ID
 		// 将当前s和appid和message进行映射
 		echo.AddMsgID(AppIDString, s, data.ID)
 		echo.AddMsgType(AppIDString, s, "guild_private")
@@ -307,6 +309,8 @@ func (p *Processors) ProcessChannelDirectMessage(data *dto.WSDirectMessageData, 
 			}
 			//enhanced config
 			groupMsg.RealMessageType = "guild_private"
+			// 与群场景对齐,应用端会丢弃缺少real_user_id的消息
+			groupMsg.RealUserID = data.Author.ID
 			//将当前s和appid和message进行映射
 			echo.AddMsgID(AppIDString, s, data.ID)
 			echo.AddMsgType(AppIDString, s, "guild_private")

@@ -174,6 +174,9 @@ func (p *Processors) ProcessGuildATMessage(data *dto.WSATMessageData, originalRa
 			SubType:         "normal",
 			Original:        originalPayload,
 			RealMessageType: "guild",
+			// 频道场景必须与群场景(ProcessGroupMessage)一样携带真实uid,
+			// 应用端会丢弃缺少real_user_id的消息
+			RealUserID: data.Author.ID,
 		}
 		//将当前s和appid和message进行映射
 		echo.AddMsgID(AppIDString, s, data.ID)

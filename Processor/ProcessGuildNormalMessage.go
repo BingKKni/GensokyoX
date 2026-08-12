@@ -171,6 +171,8 @@ func (p *Processors) ProcessGuildNormalMessage(data *dto.WSMessageData, original
 		}
 		//enhanced config
 		groupMsg.RealMessageType = "guild"
+		// 与群场景(ProcessGroupMessage)对齐,应用端会丢弃缺少real_user_id的消息
+		groupMsg.RealUserID = data.Author.ID
 		//将当前s和appid和message进行映射
 		echo.AddMsgID(AppIDString, s, data.ID)
 		echo.AddMsgType(AppIDString, s, "guild")
